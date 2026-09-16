@@ -471,8 +471,17 @@ days_ago_ts() {
   home="$(new_tmp_dir)"
   sid="$(next_session_id)"
   out_file="$(new_tmp_dir)/handler-out.json"
+  # CLAUDE_PROJECT_DIR must be set to an isolated directory, as every other
+  # invocation in this file does: unset, the handler falls back to $PWD, so
+  # running the suite from a checkout whose own .claude/settings.local.json
+  # sets outputStyle (which is what /config writes, and what this repository's
+  # working copy has) makes the handler correctly stand down and emit nothing
+  # — and this test then reports a body mismatch that has nothing to do with
+  # escaping. Green in CI (a fresh checkout has no .claude/), red for anyone
+  # who has ever picked an output style here.
   printf '{"session_id":"%s","source":"startup"}' "$sid" \
-    | HOME="$home" CLAUDE_PLUGIN_ROOT="$fixture_root" bash "$HANDLER" > "$out_file"
+    | HOME="$home" CLAUDE_PLUGIN_ROOT="$fixture_root" \
+      CLAUDE_PROJECT_DIR="$DEFAULT_PROJECT_DIR" bash "$HANDLER" > "$out_file"
   ec=$?
 
   check

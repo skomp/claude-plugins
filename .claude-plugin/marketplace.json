@@ -41,7 +41,7 @@
     {
       "name": "tone-roulette",
       "source": "./plugins/tone-roulette",
-      "version": "0.3.1",
+      "version": "0.3.2",
       "category": "entertainment",
       "description": "Rolls a random conversational tone at session start and holds it for the session; while the impatient tone holds, notes a real gap since the user's last message.",
       "author": { "name": "skomp", "url": "https://github.com/skomp" }

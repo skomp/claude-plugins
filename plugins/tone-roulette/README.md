@@ -39,6 +39,25 @@ session has nothing to compare against yet. Both hooks share their "is a style c
 tone is this session's" detection from one file (`hooks-handlers/tone-common.sh`) rather than
 keeping two copies of it.
 
+## No tone rolled? Check this first
+
+The hook stands down completely — silently, by design — whenever an `outputStyle` key is set
+in any settings file it can read, in Claude Code's own precedence order: managed settings,
+then `.claude/settings.local.json`, then `.claude/settings.json`, then
+`~/.claude/settings.json`. `/config` writes to `.claude/settings.local.json`, **per project**,
+so choosing a style once in one repository turns the roulette off in that repository for good
+while leaving it running everywhere else. That is the usual reason a tone appears in some
+projects and not others:
+
+```
+grep -l outputStyle .claude/settings.local.json .claude/settings.json ~/.claude/settings.json 2>/dev/null
+```
+
+Remove the key (or pick **Default** in `/config`) to hand the tone back to the roulette.
+`/tone` reports the current tone and how it was set. The other reasons for a quiet session
+are in Known limitations below — a `resume` re-injects rather than rolls, a fork never fires
+the hook at all, and on some models the tone is rolled but simply not followed.
+
 ## Known limitations
 
 - **Subagents do not inherit the tone.** Forks inherit the parent's system prompt; other
