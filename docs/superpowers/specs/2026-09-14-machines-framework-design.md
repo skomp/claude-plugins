@@ -1,16 +1,16 @@
 # Design — `machines`, a framework for declared communication protocols
 
-**Written** 2026-09-14. **Tracked in** `claude-operating-rules#26`. **Handoff**
+**Written** 2026-09-14. **Tracked in** `claude-plugins#26`. **Handoff**
 `docs/handoffs/2026-09-14-signal-framework.md` on `origin/session-relay`.
 **Status** design agreed; **cycle A is built, and cycle A.1 is built on top of it** — the
 declaration schema and the checker, now with typed header fields, registers, guards and a
 scoped, strengthened cap check, ship in `plugins/machines/`. Cycles B, C and D are not
 started.
 **Amended** during cycle A with the four changes agreed after this spec merged in
-`PR: claude-operating-rules#29` and tracked in `claude-operating-rules#28`: they are folded
+`PR: claude-plugins#29` and tracked in `claude-plugins#28`: they are folded
 into §6, §7, §8, §9 and the new §12, and the separate changes document is gone.
 **Amended again on 2026-09-15**, before cycle B is planned, with five decisions that were
-held only in issues: typed header fields and guards (`claude-operating-rules#31`), a
+held only in issues: typed header fields and guards (`claude-plugins#31`), a
 monotonic clock in the envelope (`#32`), the classification of transport verbs by what
 their result touches (`#34`), and the two later comments on `#28` — the limits of the
 accepting-state checks, and the finding that `session-relay`'s addressing half has no
@@ -68,7 +68,7 @@ exactly the layer this framework covers:
 Both are places where prose left something implicit and a good session covered for it.
 Neither is detectable except by watching.
 
-`claude-operating-rules#24` records that sessions invent coordination conventions when
+`claude-plugins#24` records that sessions invent coordination conventions when
 nobody gives them one — six of them in one day, on 2026-09-13, none requested, every one a
 good rule, and every one visible only in two transcripts the author could not read. `#24`
 answers with a prohibition. This framework answers by making the invention declarable,
@@ -150,7 +150,7 @@ make sure it never starts to.
 
 ### The envelope: order belongs to the channel, not to the declaration
 
-**Not built. Cycle B.** `claude-operating-rules#32`.
+**Not built. Cycle B.** `claude-plugins#32`.
 
 Every protocol message carries a **monotonic clock in its envelope**, not in the
 declaration. Order is a channel-layer fact, the same kind of fact as *who holds the
@@ -198,7 +198,7 @@ from everywhere. That writes *"a protocol terminates"* into the framework as a l
 not one.** Termination is a property of some protocols and not of others, and requiring it of
 an author whose protocol is continuous forces them to declare a bound they do not mean — **a
 declared bound nobody believes, which is the exact failure this framework exists to answer
-(`claude-operating-rules#17`).**
+(`claude-plugins#17`).**
 
 The schema separates two properties instead:
 
@@ -311,7 +311,7 @@ sender cannot forget it and cannot choose it.
 
 ### What the engine may read, which is narrower than what the transport may do
 
-**Not built. `claude-operating-rules#34`.** §8 classifies the transport's verbs; this is the
+**Not built. `claude-plugins#34`.** §8 classifies the transport's verbs; this is the
 engine's side of that classification, and it is a rule about the engine, not about the
 transport:
 
@@ -388,7 +388,7 @@ and twelve in the prose is hard to produce and obvious when produced.
 
 ### Typed header fields, and the guards that test them
 
-**Built, in cycle A.1.** `claude-operating-rules#31`. This was a **schema** change, and it
+**Built, in cycle A.1.** `claude-plugins#31`. This was a **schema** change, and it
 landed as cycle A.1's central deliverable — see §13's A.1 proposal.
 
 **The shipped syntax:** a field is one of exactly two types, `int` or `bool` — deliberately
@@ -586,7 +586,7 @@ consent.** It does not present a protocol as inert data.
 
 ### Verbs classify by what their result touches, not by direction
 
-**Not built.** `claude-operating-rules#34`. The question that produced this was whether a
+**Not built.** `claude-plugins#34`. The question that produced this was whether a
 verb may be bidirectional — a database query, where the machine asks and an answer comes
 back. The answer is that **every verb is already bidirectional**: a verb is a call, and a
 call returns. `list the messages on a channel` is a read whose result the engine folds.
@@ -631,7 +631,7 @@ unattended failure detector.
 
 ### A transport declares whether its channel gives a total order
 
-**Not built.** `claude-operating-rules#32`, first comment. This is the other half of §4's
+**Not built.** `claude-plugins#32`, first comment. This is the other half of §4's
 envelope, and it is part of the transport's contract because only the transport knows:
 
 - **A GitHub issues transport declares that the channel gives a total order.** Comment
@@ -655,7 +655,7 @@ after a shared prefix"* are both decidable.
 - **Post-prefix divergence blocks *enablement* of both machines in one repository**, not the
   install. Two machines may coexist globally and still be illegal together in one repo.
 
-**Three defects in the shipped arrangement, all from `claude-operating-rules#28`, all
+**Three defects in the shipped arrangement, all from `claude-plugins#28`, all
 verified 2026-09-15 by reading `plugins/machines/lib/machines/registry.py`:**
 
 1. **Prefix validation lived in `check_all`, not in `check_machine` — resolved in cycle
@@ -691,7 +691,7 @@ hardcodes three effects today. The check described here needs a transport declar
 arrives in cycle C.
 
 Two more checks belong here once the transport declaration exists, both from
-`claude-operating-rules#34` and `#32`:
+`claude-plugins#34` and `#32`:
 
 - **every verb that reaches outside the channel carries its mark**, and a machine naming a
   marked verb is reported to the user at install as reaching outside the channel;
@@ -701,7 +701,7 @@ Two more checks belong here once the transport declaration exists, both from
 
 ### The guard checks, and why they cost the checker nothing
 
-**Built, in cycle A.1.** `claude-operating-rules#31`. Per §7, the checker abstracts a guard
+**Built, in cycle A.1.** `claude-plugins#31`. Per §7, the checker abstracts a guard
 into a branch with both outcomes possible, so nothing above this line became harder to
 decide. What it gains is three static checks that would otherwise be runtime failures:
 
@@ -729,7 +729,7 @@ soundness claim that is not true.**
 
 ### The cap check, strengthened in cycle A.1
 
-**Weak at cycle A, strengthened in cycle A.1.** `claude-operating-rules#28`, second comment.
+**Weak at cycle A, strengthened in cycle A.1.** `claude-plugins#28`, second comment.
 
 Cycle A's `check_machine` measured the shortest run from `initial` to an accepting state and
 counted the signalling transitions on it. **If `initial` was itself accepting, that count was
@@ -880,7 +880,7 @@ it found a defect nothing predicted — which is the outcome it was written to p
   it can be settled.
 
   **Guards change what row 7 *could* be, and must not change what it *is*.**
-  `claude-operating-rules#31` cites row 7 as its motivation, and once `blocking` is a typed
+  `claude-plugins#31` cites row 7 as its motivation, and once `blocking` is a typed
   field a guard could compare the two values. **That would be a worse answer than the one this
   section already has.** A guard is a rule an author remembers to write; the engine's
   comparison is a value it cannot avoid producing, and *"a computation that always runs cannot
@@ -892,7 +892,7 @@ it found a defect nothing predicted — which is the outcome it was written to p
 - The remaining rows land in the schema as written.
 
 **What the schema cannot express, which is cycle B's input.** This is one list, not two:
-`claude-operating-rules#28`'s first comment records the same walk and its seven numbered
+`claude-plugins#28`'s first comment records the same walk and its seven numbered
 items are the same items. **Each now carries its disposition**, agreed on 2026-09-15, so that
 a reader of either document gets the same answer:
 
@@ -929,7 +929,7 @@ here invited a later cycle to try to fix them:
 ### `session-relay`'s `seq=` and the envelope's clock are different quantities
 
 **This is the contradiction most likely to be folded in smoothly, so it is written out.**
-`claude-operating-rules#32` says its change *"re-expresses a field that a real protocol
+`claude-plugins#32` says its change *"re-expresses a field that a real protocol
 already needed. It does not invent one"*, and cites `session-relay`'s `seq`. Checked against
 `docs/superpowers/specs/2026-09-13-session-relay-design.md` on 2026-09-15 — **the two are not
 the same quantity, and the clock cannot take `seq`'s place.**
@@ -962,7 +962,7 @@ readers already read it as *"3 of 10"*, is the same defect with a live audience.
 
 ### The addressing half has no channel, and that is a gap in the model
 
-**Found 2026-09-15**, `claude-operating-rules#28`, third comment. The walk above said the
+**Found 2026-09-15**, `claude-plugins#28`, third comment. The walk above said the
 control vocabulary — `whois`, `mine`, `not-mine`, `not-enabled`, `unsupported` — is
 expressible as a second machine with its own prefix. **The walk did not ask what that second
 machine would fold over. It folds over nothing.**
@@ -983,7 +983,7 @@ These are disjoint, and the checker proves they do not collide. **The absent cha
 problem.**
 
 **The recommendation is that addressing is floor, not protocol.**
-`claude-operating-rules#26` requires a floor nobody negotiates, and §12 already names one —
+`claude-plugins#26` requires a floor nobody negotiates, and §12 already names one —
 the dispatcher, the prefix, and *"no machine claims this"*. Addressing belongs there, in the
 same way DNS sits below HTTP and is not expressed in HTTP: a session finding the session that
 owns a repository is a thing that happens *before* any protocol runs.
@@ -1072,7 +1072,7 @@ that delegation works.**
    Whether a heuristic is worth having — a state whose outgoing transitions are all `by` a
    role other than its own `holder` is where waiting happens — is untested and unproposed.
 10. **The uncapped local loop, and whether it needs a second bound.**
-    `claude-operating-rules#28` states it as a requirement: the cap counts only signalling
+    `claude-plugins#28` states it as a requirement: the cap counts only signalling
     transitions, so a machine can loop on `signal: false` moves for ever, reach a terminal
     state, and pass every check — *"cycle B must add a second bound. The cap limits the
     conversation. A second bound must limit the run."*

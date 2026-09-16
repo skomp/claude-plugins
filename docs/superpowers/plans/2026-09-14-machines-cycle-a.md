@@ -1133,7 +1133,7 @@ git commit -m "Add the machines-check entry point, CI and the plugin README"
 ## After cycle A, before cycle B
 
 **Walk the seven backport rows from the spec's §10 against this schema, on paper, and write
-what you find into `claude-operating-rules#28`.** The spec says this is the cheapest
+what you find into `claude-plugins#28`.** The spec says this is the cheapest
 defect-finder in the whole design and that cycle B must not start before it. It costs
 reading and nothing else.
 

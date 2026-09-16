@@ -243,4 +243,4 @@ its two limits above are derived, not measured.
 **One consequence was found by this reasoning and does affect shipped behaviour** — the cap
 counts only signalling transitions, so a loop of non-signalling transitions (such as
 `wait → timeout → wait`) is uncapped, reaches a terminal state, and passes every check. It is
-filed against `claude-operating-rules#28` as a second bound cycle B must add.
+filed against `claude-plugins#28` as a second bound cycle B must add.
