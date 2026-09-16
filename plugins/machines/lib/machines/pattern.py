@@ -100,9 +100,9 @@ _COUNTED_REPETITION_RE = re.compile(r"\{\d+(,\d*)?\}")
 # at depth 199; depth 198 still parses. 100 is comfortably under that
 # measured failure point while being far beyond any real prefix, so a
 # publisher gets a named `PatternError` here in the ordinary case. The
-# `RecursionError` backstop in registry.py exists for whatever shape (if
-# any) reaches a deep stack some other way -- this guard is the nice
-# error, not the guarantee.
+# `RecursionError` backstop in machine.py's `prefix_problem` exists for
+# whatever shape (if any) reaches a deep stack some other way -- this
+# guard is the nice error, not the guarantee.
 _MAX_GROUP_DEPTH = 100
 
 

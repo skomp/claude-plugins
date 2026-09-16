@@ -5,22 +5,25 @@ and check it before you trust it.
 
 ## What this ships, and what it does not
 
-**Cycle A ships the schema and the checker only.** There is no engine — nothing here runs
-a machine, advances a state, or emits a message. There is no installer — nothing wires a
-declared machine into anything that dispatches real traffic. There is no dispatcher —
-nothing routes an inbound message to the machine that owns it. What exists is a closed
-declaration language, a parser for it, a set of checks that a single machine is
-well-formed, and a checker that runs those checks over every machine handed
-to it and reports whether any two claim the same message. That is the whole of cycle A.
-Anything that talks about a machine actually running is a later cycle.
+**Cycle A shipped the schema and the checker; cycle A.1 built typed fields, registers,
+guard and a scoped, strengthened cap check into that same schema and checker.** There is
+no engine — nothing here runs a machine, advances a state, or emits a message. There is no
+installer — nothing wires a declared machine into anything that dispatches real traffic.
+There is no dispatcher — nothing routes an inbound message to the machine that owns it.
+What exists is a closed declaration language, a parser for it, a set of checks that a
+single machine is well-formed, and a checker that runs those checks over every machine
+handed to it and reports whether any two claim the same message. That is the whole of
+cycle A and cycle A.1 together. Anything that talks about a machine actually running is a
+later cycle.
 
 ## The declaration
 
-A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — nine
-fields: `machine`, `version`, `prefix`, `roles`, `kinds`, `cap`, `initial`, `states`,
-`transitions`. All of them are required except `cap`. Any other top-level field is rejected
-by name, not silently ignored. `SCHEMA.md` documents every field and why it exists,
-including the two hazards worth knowing before you write a declaration by hand.
+A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — eleven
+fields: `machine`, `version`, `prefix`, `roles`, `kinds`, `fields`, `registers`, `cap`,
+`initial`, `states`, `transitions`. All of them are required except `cap`, `fields`, and
+`registers`. Any other top-level field is rejected by name, not silently ignored.
+`SCHEMA.md` documents every field and why it exists, including the two hazards worth
+knowing before you write a declaration by hand.
 
 **A protocol does not have to terminate, and does not have to declare a cap.** A state is
 *accepting* when nothing further is required — it is fine for the conversation to stop
@@ -52,11 +55,32 @@ well-formedness, and checks every pair of distinctly-named machines for a prefix
 What "well-formed" covers: every referenced state, role and kind is actually declared; at
 least one state is accepting; every state can reach somewhere a run may legitimately stop
 (an accepting state or a terminal one); a terminal state has no way out of it; nothing is
-unreachable from `initial`; no two transitions share a trigger and disagree about where it
-leads; a state's declared `holder` is the role that actually acts on the way out of it; a
-declared `cap` is large enough for the shortest run that can reach an accepting state — and
-is not checked at all when no cap is declared; and no declared kind sits there with no
-transition firing on it.
+unreachable from `initial`; a state's declared `holder` is the role that actually acts on
+the way out of it; no declared kind sits there with no transition firing on it; every
+declared `field` has a name and type the checker recognises; every declared `register`
+names a declared field and a declared kind list to fold over, and its `initial` value
+agrees in type with the field it folds; every declared register is named by some guard, or
+reported as dead weight if none names it; every `guard` names a declared field and a
+declared register, uses an ordering operator only on an `int` field, and compares two sides
+the checker can confirm are the same type; two transitions may share a trigger and disagree
+about where it leads **only** when every one of them carries a guard, all of those guards
+compare the same field to the same register, and no two of their operators can both hold at
+once — otherwise that is reported the same as an unguarded pair; and a declared `cap` is
+large enough, from every state where something is still owed (not only from `initial`), to
+reach an accepting state — measured as the fewest signalling transitions under `channel`
+scope, or as the worst single role's signalling transitions under `role` scope, since each
+role draws from its own budget — and is not checked at all when no cap is declared.
+
+**Guards.** A guard restricts *when* a transition fires: one declared header field, compared
+to one declared register's remembered value, by one of six named operators (`eq`, `ne`,
+`lt`, `le`, `gt`, `ge` — never a bare symbol). What a guard deliberately cannot do is
+aggregate over a set of messages — count how many peers have responded, say, which is
+quorum, not a fold over one register. The checker treats a guarded transition as a branch
+with both outcomes possible: it proves two guarded branches cannot *both* fire, which is
+what makes them a legal alternative to one deterministic transition, but it never evaluates
+a guard against real data, so it cannot tell you a guard never fires, or fires every time,
+or which of its declared branches a given run will actually take. `SCHEMA.md`'s `guard`
+section carries the full operator table and the determinism rule in full.
 
 What it deliberately does not cover: that the machine terminates. Cycle A required that and
 it was wrong — see `SCHEMA.md`'s "Accepting is not terminal".

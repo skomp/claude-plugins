@@ -1,6 +1,8 @@
 import unittest
+from pathlib import Path
 from machines.declaration import extract_block, parse
 from machines.errors import DeclarationError
+from machines.machine import FIELDS, REQUIRED
 
 ONE = "intro\n\n```machine\nmachine: x\n```\n\ntrailing prose\n"
 NONE = "intro only, no block\n"
@@ -23,6 +25,15 @@ class TestExtractBlock(unittest.TestCase):
         with self.assertRaises(DeclarationError):
             extract_block(OTHER_FENCE)
 
+# `cap: 10` below is the bare legacy spelling, kept unchanged on purpose.
+# `tests/fixtures/valid-session-relay.md` was byte-identical to this
+# declaration until `cap` gained a scope and moved to the mapping form
+# (`cap: { limit: 10, per: role }`) there -- VALID did not move with it.
+# From here on VALID is the back-compatibility regression
+# fixture for the bare-integer spelling, and the *only* place that
+# spelling is still exercised: re-syncing the two would delete that
+# coverage. See `test_the_session_relay_fixture_declares_a_per_role_cap`
+# below, which carries the same note against the fixture side.
 VALID = """
 ```machine
 machine: session-relay
@@ -118,6 +129,72 @@ class TestParse(unittest.TestCase):
         # able to say nothing about a cap rather than invent one.
         m = parse(VALID.replace("cap: 10\n", ""))
         self.assertIsNone(m.cap)
+        # `cap_scope` still carries its default even with no cap to scope
+        # -- unused, but present, the same reasoning `fields`/`registers`
+        # default to `{}` rather than `None`.
+        self.assertEqual(m.cap_scope, "channel")
+
+    def test_a_bare_integer_cap_means_per_channel(self):
+        m = parse(VALID)
+        self.assertEqual(m.cap, 10)
+        self.assertEqual(m.cap_scope, "channel")
+
+    def test_the_mapping_form_with_per_channel_is_identical_to_the_bare_form(self):
+        spelled = parse(VALID.replace("cap: 10", "cap: { limit: 10, per: channel }"))
+        self.assertEqual(
+            (spelled.cap, spelled.cap_scope),
+            (parse(VALID).cap, parse(VALID).cap_scope))
+
+    def test_per_role_lands_on_cap_scope(self):
+        m = parse(VALID.replace("cap: 10", "cap: { limit: 10, per: role }"))
+        self.assertEqual(m.cap, 10)
+        self.assertEqual(m.cap_scope, "role")
+
+    def test_the_mapping_form_requires_both_keys(self):
+        with self.assertRaises(DeclarationError) as ctx:
+            parse(VALID.replace("cap: 10", "cap: { limit: 10 }"))
+        self.assertEqual(ctx.exception.field, "per")
+        with self.assertRaises(DeclarationError) as ctx:
+            parse(VALID.replace("cap: 10", "cap: { per: role }"))
+        self.assertEqual(ctx.exception.field, "limit")
+
+    def test_an_unknown_scope_is_rejected_by_name(self):
+        # `sender` is not a word this schema uses -- there is no per-sender
+        # scope, and the declaration itself has no field named `sender`
+        # for one to mean. `run` is rejected too: a run is a channel under
+        # a different name, not a separate scope.
+        for bad in ("sender", "run", "issue"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(DeclarationError) as ctx:
+                    parse(VALID.replace(
+                        "cap: 10", "cap: { limit: 10, per: %s }" % bad))
+                self.assertEqual(ctx.exception.field, "cap")
+
+    def test_an_unknown_key_in_the_cap_mapping_is_rejected(self):
+        with self.assertRaises(DeclarationError) as ctx:
+            parse(VALID.replace(
+                "cap: 10", "cap: { limit: 10, per: role, extra: 1 }"))
+        self.assertEqual(ctx.exception.field, "extra")
+
+    def test_the_limit_obeys_the_positive_integer_rule(self):
+        # Same rule as the bare form's, including the `bool` exclusion --
+        # `per: role` does not relax what counts as a real count.
+        for value in ("0", "-1", '"ten"', "true"):
+            with self.subTest(value=value):
+                with self.assertRaises(DeclarationError) as ctx:
+                    parse(VALID.replace(
+                        "cap: 10", "cap: { limit: %s, per: role }" % value))
+                self.assertEqual(ctx.exception.field, "cap")
+
+    def test_the_session_relay_fixture_declares_a_per_role_cap(self):
+        # The fixture is the real declaration and says what the protocol
+        # means; VALID above keeps the bare form on purpose -- see the
+        # comment above VALID's definition. Do not re-sync the two: doing
+        # so would delete the only coverage this suite has of the legacy
+        # bare-integer spelling.
+        text = (Path(__file__).parent / "fixtures" / "valid-session-relay.md").read_text()
+        m = parse(text)
+        self.assertEqual((m.cap, m.cap_scope), (10, "role"))
 
     def test_unknown_top_level_field_raises_and_names_it(self):
         bad = VALID.replace("cap: 10", "cap: 10\ncaps: 12")
@@ -142,6 +219,23 @@ class TestParse(unittest.TestCase):
                 with self.assertRaises(DeclarationError) as ctx:
                     parse(VALID.replace("cap: 10", "cap: " + value))
                 self.assertEqual(ctx.exception.field, "cap")
+
+    def test_fields_is_accepted_but_not_required(self):
+        # `fields` and `registers` are both optional top-level fields.
+        # VALID carries neither, and has always parsed -- assert that on
+        # purpose, rather than let the suite stay green by accident if a
+        # future change made either required.
+        self.assertIn("fields", FIELDS)
+        self.assertIn("registers", FIELDS)
+        # The full value, not just two memberships: a membership check
+        # alone would not catch some future change accidentally adding a
+        # third optional name to FIELDS without also excluding it here.
+        self.assertEqual(
+            REQUIRED,
+            ("machine", "version", "prefix", "roles", "kinds",
+             "initial", "states", "transitions"))
+        m = parse(VALID)
+        self.assertEqual(m.fields, {})
 
     def test_duplicate_state_name_raises(self):
         bad = VALID.replace(
@@ -293,6 +387,18 @@ class TestMalformedInputIsRejectedByNameNotByTraceback(unittest.TestCase):
     def test_roles_that_is_a_list_is_rejected(self):
         self.assert_rejected("roles", _ROLES_BLOCK, "roles: [a, b]\n")
 
+    def test_a_role_key_that_is_not_a_string_is_rejected(self):
+        # `check_machine` sorts `m.roles` to build `role_index` for the
+        # per-role cap search (machine.py, `role_index = {r: i for i, r
+        # in enumerate(sorted(m.roles))}`). A non-string role key sails
+        # past the `isinstance(roles, dict)` check and used to reach
+        # that sort as a raw `TypeError: '<' not supported between
+        # instances of 'str' and 'int'` -- the shipped CLI exiting 1
+        # with a Python traceback instead of naming the field.
+        self.assert_rejected(
+            "roles", _ROLES_BLOCK,
+            "roles:\n  1: repository\n  responder: repository\n")
+
     def test_a_states_entry_that_is_not_a_mapping_is_rejected(self):
         self.assert_rejected("states", _A_STATE, "- 5")
 
@@ -349,10 +455,11 @@ class TestMalformedInputIsRejectedByNameNotByTraceback(unittest.TestCase):
         # A literal this long parses and compiles cleanly on its own -- no
         # metacharacter anywhere in it -- but a bare literal past 498
         # characters blows the stack with an uncaught RecursionError deep
-        # in the NFA compiler (reached via check_all), not a
-        # DeclarationError. 401 is one past the declared 400-character
-        # limit, well short of where recursion actually fails, so this
-        # exercises the guard rather than the crash it exists to prevent.
+        # in the NFA compiler (reached via check_machine's prefix_problem,
+        # in machine.py), not a DeclarationError. 401 is one past the
+        # declared 400-character limit, well short of where recursion
+        # actually fails, so this exercises the guard rather than the
+        # crash it exists to prevent.
         self.assert_rejected(
             "prefix", 'prefix: "session-relay:v1 "',
             'prefix: "%s"' % ("a" * 401))

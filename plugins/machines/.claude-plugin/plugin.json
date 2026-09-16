@@ -1,6 +1,6 @@
 {
   "name": "machines",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Declare and check protocol state machines.",
   "author": { "name": "skomp", "url": "https://github.com/skomp" },
   "homepage": "https://github.com/skomp/claude-plugins",

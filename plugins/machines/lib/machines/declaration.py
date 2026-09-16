@@ -1,12 +1,17 @@
 import re
 import yaml
 from .errors import DeclarationError
-from .machine import FIELDS, REQUIRED, Machine, State, Transition
+from .machine import (FIELDS, REQUIRED, Machine, State, Transition, Field,
+                       FIELD_TYPES, NAME, _MAX_PREFIX_LENGTH, Register, FOLDS,
+                       Guard, OP_ATOMS, CAP_SCOPES)
 
 _FENCE = re.compile(r"^```machine[ \t]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 
 _STATE_KEYS = {"name", "holder", "terminal", "accepting"}
-_TRANSITION_KEYS = {"from", "on", "by", "to", "signal", "effects"}
+_TRANSITION_KEYS = {"from", "on", "by", "to", "signal", "effects", "guard"}
+_REGISTER_KEYS = {"fold", "field", "on", "initial"}
+_GUARD_KEYS = {"field", "op", "register"}
+_CAP_KEYS = {"limit", "per"}
 
 
 class MachineSafeLoader(yaml.SafeLoader):
@@ -78,10 +83,7 @@ def parse(text):
     # invented number. Optional is not unvalidated, though: a cap that *is*
     # written must be a real count, and must not be a bool (Python
     # considers `True` an `int`, so `cap: true` would otherwise land as 1).
-    cap = data.get("cap")
-    if cap is not None:
-        if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1:
-            raise DeclarationError("cap must be a positive integer", field="cap")
+    cap, cap_scope = _cap_field(data)
 
     kinds = data["kinds"]
     if not isinstance(kinds, list):
@@ -94,6 +96,18 @@ def parse(text):
         raise DeclarationError(
             "roles must be a mapping of role name to what it binds to",
             field="roles")
+    # `check_machine` sorts `m.roles` (to build `role_index` for the
+    # per-role cap search) -- a role key that is not a string sails past
+    # the mapping check above and then crashes that sort with a raw
+    # `TypeError` comparing e.g. `str` to `int`. Every other name in this
+    # schema is validated at parse time; the keys of `roles` were the one
+    # exception, because nothing before the `role`-scoped cap search ever
+    # needed them to be more than mapping keys.
+    for role in roles:
+        _require_string(role, "roles", "each key of ")
+
+    fields = _fields_section(data)
+    registers = _registers_section(data)
 
     raw_states = data["states"]
     if not isinstance(raw_states, list):
@@ -130,13 +144,142 @@ def parse(text):
         transitions.append(Transition(
             field["from"], field["on"], field["by"], field["to"],
             _bool_field(raw, "signal", False), _effects_field(raw),
+            _guard_field(raw),
         ))
 
     return Machine(
         data["machine"], data["version"], data["prefix"],
         dict(roles), set(kinds), cap,
         data["initial"], states, transitions,
+        fields=fields, registers=registers, cap_scope=cap_scope,
     )
+
+def _fields_section(data):
+    """The optional `fields` mapping: declared header field name to its
+    type. Entirely parse-time -- there is no cross-reference for
+    `check_machine` to make, because a field's type is fixed right here
+    and nothing later depends on another field's value.
+
+    Absent or empty means no fields declared, and the result is `{}`, not
+    `None` -- a caller (cycle B's engine, and `_registers_section` below,
+    which references a field by name) never has to check for the
+    difference.
+
+    A mapping, not a list of `{name, type}` objects: a list would be a
+    third entry shape to validate for the same information a mapping
+    already carries, and a mapping cannot carry a duplicate name at all --
+    there is no `[{name: ballot, ...}, {name: ballot, ...}]` here to
+    catch.
+
+    Each key must match `NAME` (machine.py) -- in particular, no `.`: the
+    dotted namespace is reserved for the message envelope a later cycle
+    adds (`envelope.clock` and the like), and a declared field colliding
+    with it would be the readable route back to guarding that clock
+    directly, which the spec forbids. Each value must be a string found in
+    `FIELD_TYPES` -- closed, so a publisher who writes `ballot: integer`
+    or `ballot: number` is told the word is wrong instead of getting a
+    machine whose guard the engine cannot evaluate, and `fields: {ballot:
+    3}` is rejected here, before a non-string type word ever reaches a
+    guard's type check.
+    """
+    if "fields" not in data:
+        return {}
+    raw = data["fields"]
+    if not isinstance(raw, dict):
+        raise DeclarationError(
+            "fields must be a mapping of field name to type, not %r" % (raw,),
+            field="fields")
+    fields = {}
+    for name, type_word in raw.items():
+        if not isinstance(name, str) or not NAME.match(name):
+            raise DeclarationError(
+                "field name %r must match %s" % (name, NAME.pattern),
+                field="fields")
+        if not isinstance(type_word, str) or type_word not in FIELD_TYPES:
+            raise DeclarationError(
+                "field %r has type %r, which is not one of %s"
+                % (name, type_word, FIELD_TYPES), field="fields")
+        fields[name] = Field(name, type_word)
+    return fields
+
+def _registers_section(data):
+    """The optional `registers` mapping: register name to its fold
+    declaration. Entirely shape validation here -- whether the register's
+    `field` and `on` actually name declared things is a cross-reference
+    `check_machine` makes (R1, R2), not this function, the same split
+    `_fields_section` documents above.
+
+    Absent or empty means no registers declared, and the result is `{}`,
+    not `None` -- the same reason `_fields_section` gives.
+
+    A mapping, keyed the same way `fields` is and for the same reason: a
+    list of `{name: ...}` objects would be a third entry shape to
+    validate for information a mapping already carries, and could carry a
+    duplicate register name a mapping cannot.
+
+    Each key must match `NAME` (machine.py), the same pattern `fields`
+    uses and the same reasoning -- register names and field names share
+    one namespace (see `NAME`'s comment in machine.py) and both must stay
+    clear of the dotted `envelope.*` one.
+
+    Each value must be a mapping with exactly the four keys `fold`,
+    `field`, `on`, `initial` -- all required, none else tolerated:
+
+    - `fold` a string in `FOLDS`.
+    - `field` a string -- not checked against `fields` here; that is R1.
+    - `on` a non-empty list of strings -- not checked against `kinds`
+      here; that is R2. Non-empty because an `on` that never fires would
+      be a register that never updates, which is a constant declared
+      through the back door; see SCHEMA.md's `registers` section for why
+      that is a stated gap rather than a feature to admit this way.
+    - `initial` an `int` (Python's `bool` is a subclass of `int`, so this
+      test alone accepts both) -- whether it agrees with the field's
+      declared type is R3, a cross-reference this function cannot make.
+    """
+    if "registers" not in data:
+        return {}
+    raw = data["registers"]
+    if not isinstance(raw, dict):
+        raise DeclarationError(
+            "registers must be a mapping of register name to its fold "
+            "declaration, not %r" % (raw,), field="registers")
+    registers = {}
+    for name, spec in raw.items():
+        if not isinstance(name, str) or not NAME.match(name):
+            raise DeclarationError(
+                "register name %r must match %s" % (name, NAME.pattern),
+                field="registers")
+        _require_mapping(spec, "registers")
+        _reject_unknown(spec, _REGISTER_KEYS, "registers")
+
+        fold = _require_string(
+            _require_present(spec, "fold", "registers"), "fold",
+            "a register's ")
+        if fold not in FOLDS:
+            raise DeclarationError(
+                "register %r has fold %r, which is not one of %s"
+                % (name, fold, FOLDS), field="registers")
+
+        field = _require_string(
+            _require_present(spec, "field", "registers"), "field",
+            "a register's ")
+
+        on = _require_present(spec, "on", "registers")
+        if not isinstance(on, list) or not on:
+            raise DeclarationError(
+                "register %r must have a non-empty list of kinds under "
+                "'on', not %r" % (name, on), field="registers")
+        for kind in on:
+            _require_string(kind, "on", "each entry of a register's ")
+
+        initial = _require_present(spec, "initial", "registers")
+        if not isinstance(initial, int):
+            raise DeclarationError(
+                "register %r initial must be an int or a bool, not %r"
+                % (name, initial), field="registers")
+
+        registers[name] = Register(name, fold, field, list(on), initial)
+    return registers
 
 def _reject_unknown(raw, allowed, where):
     for key in raw:
@@ -176,45 +319,15 @@ def _require_present(raw, key, where):
             "a %s entry is missing required field %r" % (where, key), field=key)
     return raw[key]
 
-# `prefix` is not just a string -- it is source text pattern.py compiles to
-# an NFA. `_parse_cat` (the recursive-descent parser's grammar production
-# for concatenation) is an iterative loop, not per-character recursion, so
-# parsing itself survives a long bare literal; but it builds a left-deep
-# `Cat(Cat(Cat(...), Lit), Lit)` tree, one level per character, and the
-# Thompson NFA compiler's `_compile_cat` walks that tree by recursing into
-# `node.left` -- so a long enough literal exhausts Python's call stack
-# during *compilation*, with no `(`, `|`, or repetition operator anywhere
-# in it, and nothing about the parse stage itself at fault.
-#
-# Measured: a 498-character literal prefix compiles; 499 raises
-# `RecursionError` out of `compile_pattern`, reached via `check_all` (see
-# registry.py), past every shape guard above, as an uncaught traceback --
-# exit 1 from `machines-check` for a crash, not a finding.
-#
-# 400 is the limit for *this* route: two orders of magnitude above
-# `session-relay:v1 ` (17 characters) or any other plausible protocol
-# prefix, comfortably under the 498 where a bare literal's recursion
-# fails, checked here -- before the pattern parser ever sees the text --
-# so the publisher gets a named field and a stated limit instead of a
-# stack trace for that shape of input.
-#
-# CORRECTION: an earlier version of this comment called 498 "the exact
-# failure this module's shape guards otherwise exist to prevent" -- true
-# only for a bare literal. A prefix built from nested `(...)` groups
-# recurses in the *parser*, not just the compiler, and hits it far
-# shallower: `'(' * 199 + 'a' + ')' * 199` is 399 characters -- under this
-# 400-character guard -- and still raised an uncaught `RecursionError`
-# through the shipped CLI. This length guard bounds the concatenation-
-# chain route (a long flat Cat/Alt tree, whatever it's built from --
-# literals, `|` branches, or short reps) and nothing else; it was never a
-# bound on nesting depth. Nesting depth has its own guard now
-# (`_MAX_GROUP_DEPTH` in pattern.py, checked in `_parse_group`), and
-# whatever either guard misses is caught as a last resort where
-# `compile_pattern` is called (see registry.py's `RecursionError` handler)
-# rather than propagating as a traceback.
-_MAX_PREFIX_LENGTH = 400
-
-
+# `_MAX_PREFIX_LENGTH` is defined in machine.py, next to `prefix_problem`
+# (imported above), not here -- see it there for the full measurement and
+# reasoning (a 498-character literal recursion limit in compile_pattern,
+# the 399-character nested-group case, and why the number is shared
+# between this module's parse-time check and `prefix_problem`'s check for
+# a hand-built `Machine` that skipped this parser entirely). It stays
+# enforced here too, at parse time, so a publisher gets a named field and
+# a stated limit before the pattern parser ever sees the text, rather
+# than only after a `Machine` has already been constructed.
 def _require_prefix_length(prefix):
     if len(prefix) > _MAX_PREFIX_LENGTH:
         raise DeclarationError(
@@ -255,6 +368,88 @@ def _effects_field(raw):
     for effect in effects:
         _require_string(effect, "effects", "each entry of ")
     return effects
+
+def _guard_field(raw):
+    """A transition's optional `guard`: a mapping with exactly the three
+    keys `field`, `op`, `register` -- all required, none else tolerated,
+    each a string, `op` one of `OP_ATOMS`'s six words. Entirely shape
+    validation here -- whether `field` and `register` actually name a
+    declared field and a declared register is a cross-reference
+    `check_machine` makes (G1, G2), the same split `_fields_section` and
+    `_registers_section` document above for their own contents.
+
+    Absent means the transition fires unconditionally, and the result is
+    `None`, not a `Guard` with empty fields -- the same reasoning
+    `_fields_section` gives for returning `{}` rather than `None`, read in
+    the other direction: here, nothing declared means nothing to compare.
+
+    `op` must be spelled as a word, never a symbol. Loaded through the
+    shipped `MachineSafeLoader`, an unquoted `op: >` in block context
+    parses to the empty string with no error raised anywhere -- `>` is
+    YAML's block-scalar indicator, not a comparison operator reaching this
+    function -- and `op: !=` fails with a YAML error about a tag instead
+    of a named field. Neither is the failure a publisher who tried a
+    symbol should get; requiring one of `OP_ATOMS`'s words sidesteps both
+    by construction, rather than trying to detect the symbol forms after
+    the fact.
+    """
+    if "guard" not in raw:
+        return None
+    spec = raw["guard"]
+    _require_mapping(spec, "guard")
+    _reject_unknown(spec, _GUARD_KEYS, "guard")
+    field = _require_string(
+        _require_present(spec, "field", "guard"), "field", "a guard's ")
+    op = _require_string(
+        _require_present(spec, "op", "guard"), "op", "a guard's ")
+    if op not in OP_ATOMS:
+        raise DeclarationError(
+            "guard has op %r, which is not one of %s"
+            % (op, sorted(OP_ATOMS)), field="guard")
+    register = _require_string(
+        _require_present(spec, "register", "guard"), "register",
+        "a guard's ")
+    return Guard(field, op, register)
+
+
+def _cap_field(data):
+    """The optional top-level `cap`: a bare positive integer, or a mapping
+    `{ limit: <positive integer>, per: <one of CAP_SCOPES> }`. Both forms
+    say the same thing when `per` is `channel` -- the bare form is not a
+    separate rule, it is the mapping form's `channel` case spelled without
+    the mapping, and stays valid on that basis rather than as a special
+    case ported forward for its own sake. Returns `(cap, cap_scope)`;
+    absent `cap` returns `(None, "channel")` -- the scope is meaningless
+    with no cap to scope, but the attribute must still exist on every
+    `Machine`, mapping form or not.
+
+    Only shape and spelling are validated here. What `channel` and `role`
+    each count, and whether a declared cap is large enough, is
+    `check_machine`'s question, not `parse`'s -- the same split every
+    other cross-referencing check in this module keeps.
+    """
+    if "cap" not in data:
+        return None, "channel"
+    cap = data["cap"]
+    if isinstance(cap, dict):
+        _reject_unknown(cap, _CAP_KEYS, "cap")
+        limit = _require_present(cap, "limit", "cap")
+        per = _require_string(
+            _require_present(cap, "per", "cap"), "per", "a cap's ")
+        if per not in CAP_SCOPES:
+            raise DeclarationError(
+                "cap has per %r, which is not one of %s"
+                % (per, sorted(CAP_SCOPES)), field="cap")
+        _require_positive_cap(limit)
+        return limit, per
+    _require_positive_cap(cap)
+    return cap, "channel"
+
+
+def _require_positive_cap(value):
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise DeclarationError("cap must be a positive integer", field="cap")
+
 
 def _bool_field(raw, key, default):
     # Narrowing MachineSafeLoader's bool resolution (above) stops YAML from

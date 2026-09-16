@@ -3,6 +3,7 @@ import io
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from machines.cli import main
 from machines.declaration import parse
@@ -14,6 +15,9 @@ def named(name, prefix, version="v1"):
     text = VALID.replace("machine: session-relay", "machine: " + name)
     text = text.replace('prefix: "session-relay:v1 "', 'prefix: "%s"' % prefix)
     return parse(text.replace("version: v1", "version: " + version))
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class TestCheckAll(unittest.TestCase):
@@ -115,6 +119,20 @@ class TestCheckAll(unittest.TestCase):
         self.assertNotIn("beta", report.problems)
         self.assertEqual(report.collisions, [])
 
+    # --- gap found by the commit that moved prefix validation into
+    # check_machine (machine.py's prefix_problem), so a bad prefix
+    # must be reported exactly once, not once by check_machine and again
+    # by check_all re-deriving the same verdict.
+
+    def test_a_bad_prefix_is_reported_once_not_twice(self):
+        bad = named("alpha", "alpha:v1 ")
+        bad.prefix = "a*"
+        report = check_all([bad, named("beta", "beta:v1 ")])
+        self.assertEqual(
+            len([p for p in report.problems["alpha"] if "prefix" in p]), 1,
+            report.problems["alpha"])
+        self.assertEqual(report.collisions, [])   # excluded from collision checking
+
 
 class TestCli(unittest.TestCase):
     def test_no_paths_exits_2_and_says_so(self):
@@ -132,7 +150,7 @@ class TestCli(unittest.TestCase):
     def test_a_valid_fixture_exits_0_and_reports_the_count(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = main(["tests/fixtures/valid-session-relay.md"])
+            code = main([str(FIXTURES / "valid-session-relay.md")])
         self.assertEqual(code, 0)
         self.assertIn("Examined 1 machine", out.getvalue())
 
@@ -158,7 +176,7 @@ class TestCli(unittest.TestCase):
         # found no collisions.
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = main(["tests/fixtures/valid-session-relay.md"])
+            code = main([str(FIXTURES / "valid-session-relay.md")])
         self.assertEqual(code, 0)
         self.assertIn("Examined 1 machine", out.getvalue())
         self.assertNotIn("No collisions found", out.getvalue())
@@ -223,6 +241,26 @@ class TestCli(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = main([path])
         self.assertEqual(code, 0, out.getvalue())
+
+    # --- the cycle's worked guarded example, end to end through the
+    # shipped CLI: the fixture-loading path, the collision check and the
+    # CLI itself had not seen a guarded declaration until this task.
+
+    def test_the_paxos_fixture_is_well_formed_end_to_end(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main([str(FIXTURES / "valid-paxos-acceptor.md")])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("Examined 1 machine", out.getvalue())
+
+    def test_the_two_fixtures_do_not_collide(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = main([str(FIXTURES / "valid-session-relay.md"),
+                         str(FIXTURES / "valid-paxos-acceptor.md")])
+        self.assertEqual(code, 0, out.getvalue())
+        self.assertIn("Examined 2 machines", out.getvalue())
+        self.assertIn("No collisions found", out.getvalue())
 
 
 if __name__ == "__main__":

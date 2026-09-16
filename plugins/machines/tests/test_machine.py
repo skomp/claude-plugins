@@ -1,7 +1,10 @@
 import unittest
+import machines.machine as machine_module
 from machines.declaration import parse
-from machines.machine import Machine, State, Transition, check_machine
+from machines.machine import (Machine, State, Transition, check_machine,
+                               _MAX_PREFIX_LENGTH)
 from tests.test_declaration import VALID  # the known-good declaration
+from tests.test_guards import GUARDED  # the known-good guarded declaration
 
 def mutate(old, new):
     # Assert the splice landed. A `str.replace` whose `old` no longer
@@ -34,6 +37,45 @@ def _linear_machine(cap):
             Transition("middle", "step2", "role", "done", signal=True),
         ],
     )
+
+
+def _phase2_machine(limit):
+    """`A, A, B` at `limit`, per role -- four states, two roles, one
+    signalling edge per entry by that role: `s0` needs role `a` to fire
+    twice (`s0` -> `s1` -> `s2`) before role `b` fires once (`s2` -> `s3`).
+
+    This is the shape that actually exercises phase 2: an alternating
+    chain spreads its signalling transitions evenly across roles, which
+    is precisely what makes a per-role cap *satisfiable*, so it would
+    prove nothing about the search. Here role `a` alone exceeds `limit`
+    on the only route out of `s0`, so phase 1 (the free per-channel
+    clearance) cannot clear `s0` -- its channel-scope distance is 3,
+    `limit` is 1 -- and phase 2 must actually search to find that no
+    route keeps role `a`'s own count at or under `limit` either.
+
+    Product for the `_MAX_CAP_SEARCH` guard: `len(states) * (limit + 1) **
+    len(roles)` = `4 * (limit + 1) ** 2`; at `limit=1` that is `4 * 4 =
+    16`, comfortably searchable, and comfortably tripped by patching the
+    guard down in a test.
+    """
+    return Machine(
+        "phase2-test", "v1", "x",
+        {"a": "party", "b": "party"}, {"step1", "step2"}, limit,
+        "s0",
+        {
+            "s0": State("s0", holder="a"),
+            "s1": State("s1", holder="a"),
+            "s2": State("s2", holder="b"),
+            "s3": State("s3", terminal=True, accepting=True),
+        },
+        [
+            Transition("s0", "step1", "a", "s1", signal=True),
+            Transition("s1", "step1", "a", "s2", signal=True),
+            Transition("s2", "step2", "b", "s3", signal=True),
+        ],
+        cap_scope="role",
+    )
+
 
 class TestCheckMachine(unittest.TestCase):
     def test_the_known_good_machine_has_no_problems(self):
@@ -103,6 +145,31 @@ class TestCheckMachine(unittest.TestCase):
         problems = check_machine(m)
         self.assertEqual(len(problems), 1, problems)
         self.assertTrue(any("nowhere" in p for p in problems))
+
+    def test_a_prefix_that_will_not_compile_is_reported_by_check_machine(self):
+        m = _linear_machine(cap=2)
+        m.prefix = "a*"          # nullable: claims every message
+        problems = check_machine(m)
+        self.assertTrue(any("prefix" in p for p in problems), problems)
+
+    def test_a_compiling_prefix_adds_no_problem(self):
+        self.assertEqual(check_machine(_linear_machine(cap=2)), [])
+
+    def test_a_prefix_over_the_length_limit_is_reported_by_check_machine(self):
+        # `declaration.parse` rejects this before a Machine ever exists
+        # (see declaration.py's `_require_prefix_length`), so this only
+        # exercises a hand-built Machine -- exactly the case check_machine
+        # is now the sole gate for.
+        m = _linear_machine(cap=2)
+        m.prefix = "a" * (_MAX_PREFIX_LENGTH + 1)
+        problems = check_machine(m)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("prefix", problems[0])
+
+    def test_a_prefix_at_the_length_limit_adds_no_problem(self):
+        m = _linear_machine(cap=2)
+        m.prefix = "a" * _MAX_PREFIX_LENGTH
+        self.assertEqual(check_machine(m), [])
 
 
 class TestChecksNoTaskOwned(unittest.TestCase):
@@ -179,13 +246,18 @@ class TestChecksNoTaskOwned(unittest.TestCase):
         # here would reject machines that are perfectly runnable.
         self.assertEqual(check_machine(_linear_machine(cap=2)), [])
 
-    def test_an_accepting_initial_state_satisfies_every_cap(self):
-        # The consequence of the line above, pinned rather than left
-        # implicit: a machine whose initial state is accepting can stop
-        # having emitted nothing, so no positive cap can be too small for
-        # it. VALID is exactly that machine now.
+    def test_an_accepting_initial_state_no_longer_hides_a_cap_that_is_too_small(self):
+        # This is the whole point of the stronger check. session-relay's
+        # `unopened` is initial AND accepting, so the old check measured zero
+        # from it and no positive cap could ever be reported. The new check
+        # asks the question at every state where something is owed.
         m = mutate("cap: 10", "cap: 1")
-        self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
+        problems = [p for p in check_machine(m) if "cap" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("awaiting-answer", problems[0])
+
+    def test_the_real_session_relay_cap_is_still_satisfied(self):
+        self.assertEqual([p for p in check_machine(parse(VALID)) if "cap" in p], [])
 
     def test_local_moves_on_the_shortest_run_do_not_count_against_the_cap(self):
         # The re-reviewer's own machine: two purely-local moves
@@ -399,13 +471,6 @@ class TestAcceptingStates(unittest.TestCase):
         )
         self.assertEqual(check_machine(m), [])
 
-    def test_the_cap_check_is_skipped_entirely_when_cap_is_absent(self):
-        # Not merely "an uncapped machine happens to pass": the machine
-        # here is one that *would* fail the cap check for any cap under 2,
-        # and with no cap declared there is nothing to compare against.
-        m = _linear_machine(cap=None)
-        self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
-
     def test_a_machine_that_is_entirely_accepting_and_never_terminates_passes(self):
         # The gossip shape. Every state is accepting: at any moment it is
         # fine for the conversation to stop, and it is equally fine for
@@ -482,6 +547,243 @@ class TestAcceptingStates(unittest.TestCase):
             ],
         )
         self.assertEqual(check_machine(m), [])
+
+
+class TestCapSubjects(unittest.TestCase):
+    """The stronger cap check: measured from every state where something
+    is owed, not only from `initial`. The shipped check
+    measured only from `initial`, so a machine whose initial state is
+    accepting -- session-relay's `unopened` -- always measured a distance
+    of zero, and no positive cap could ever be reported. `session-relay`
+    has exactly that shape, so the framework's only real declaration
+    exercised the old check not at all.
+    """
+
+    def test_a_cap_is_measured_from_every_state_where_something_is_owed(self):
+        # `start` is initial and accepting, so the old check -- which only
+        # ever measured from `initial` -- would report nothing at any cap.
+        # The new check asks the question at every subject: `near`, two
+        # signalling transitions from the nearest accepting state, is one
+        # such subject; `far`, one transition away, is not.
+        m = Machine(
+            "every-subject-test", "v1", "x",
+            {"role": "party"}, {"x", "y", "z"}, 1,
+            "start",
+            {
+                "start": State("start", holder="role", accepting=True),
+                "near": State("near", holder="role"),
+                "far": State("far", holder="role"),
+                "done": State("done", holder="role", accepting=True),
+            },
+            [
+                Transition("start", "x", "role", "near", signal=True),
+                Transition("near", "y", "role", "far", signal=True),
+                Transition("far", "z", "role", "done", signal=True),
+            ],
+        )
+        problems = [p for p in check_machine(m) if "cap" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("near", problems[0])
+
+    def test_an_accepting_state_is_not_a_subject(self):
+        # Every state here is accepting, so nothing is ever owed anywhere.
+        # Cap 0 -- a value no non-accepting subject could ever satisfy --
+        # must still be satisfied everywhere, because there is no subject:
+        # an accepting state's own distance to the goal set (itself) is
+        # always zero, and it is never asked the question at all.
+        m = Machine(
+            "accepting-not-subject-test", "v1", "x",
+            {"peer": "session"}, {"rumour"}, 0,
+            "idle",
+            {
+                "idle": State("idle", holder="peer", accepting=True),
+                "informed": State("informed", holder="peer", accepting=True),
+            },
+            [
+                Transition("idle", "rumour", "peer", "informed", signal=True),
+                Transition("informed", "rumour", "peer", "idle", signal=True),
+            ],
+        )
+        self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
+
+    def test_a_terminal_non_accepting_state_is_not_a_subject(self):
+        # `aborted` is terminal and not accepting: something was owed and
+        # the run stopped anyway. Cap 0 must still report nothing, because
+        # a terminal non-accepting state is never asked the question --
+        # not because asking it would be wrong (it can reach no accepting
+        # state at all, so the no-goal-reachable case below would clear it
+        # anyway), but because a subject this check can name is exactly a
+        # state the answer is genuinely open for.
+        m = Machine(
+            "abort-not-subject-test", "v1", "x",
+            {"role": "party"}, {"go", "give-up"}, 0,
+            "idle",
+            {
+                "idle": State("idle", holder="role", accepting=True),
+                "aborted": State("aborted", terminal=True),
+            },
+            [
+                Transition("idle", "go", "role", "idle", signal=True),
+                Transition("idle", "give-up", "role", "aborted", signal=True,
+                           effects=["escalate"]),
+            ],
+        )
+        self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
+
+    def test_a_state_from_which_no_accepting_state_is_reachable_reports_no_cap_problem(self):
+        # The doomed branch. Spec section 9 refused to report it through
+        # the reachability check; the cap check must not report it through
+        # the back door either. `doomed` IS a subject -- not accepting,
+        # not terminal -- but its only future is `aborted`, terminal and
+        # not accepting, so no accepting state is reachable from it at
+        # all.
+        m = Machine(
+            "doomed-branch-cap-test", "v1", "x",
+            {"role": "party"}, {"fork", "fail"}, 1,
+            "idle",
+            {
+                "idle": State("idle", holder="role", accepting=True),
+                "doomed": State("doomed", holder="role"),
+                "aborted": State("aborted", terminal=True),
+            },
+            [
+                Transition("idle", "fork", "role", "doomed", signal=True),
+                Transition("doomed", "fail", "role", "aborted", signal=True,
+                           effects=["escalate"]),
+            ],
+        )
+        self.assertEqual(check_machine(m), [])
+
+    def test_a_terminal_non_accepting_state_does_not_count_as_a_cap_goal(self):
+        # Pins the goal set: the accepting states, and only the accepting
+        # states -- not `accepting | terminal`. `start` has a cheap (one
+        # signalling transition) route to `aborted`, terminal and not
+        # accepting; if the goal set were widened to include terminal
+        # states, that route would satisfy cap 1 and this test would go
+        # quiet. The only route from `start` to an ACCEPTING state
+        # (`start` -> `mid` -> `done`) costs 2, over cap 1. Measured: with
+        # the goal set widened to `{done, aborted}`, `start`'s distance
+        # drops from 2 to 1 and the finding below disappears entirely --
+        # confirmed directly against `_signal_distances` before writing
+        # this test (see the fix-round report).
+        m = Machine(
+            "goal-set-test", "v1", "x",
+            {"role": "party"}, {"a", "b", "c"}, 1,
+            "start",
+            {
+                "start": State("start", holder="role"),
+                "mid": State("mid", holder="role"),
+                "done": State("done", holder="role", accepting=True),
+                "aborted": State("aborted", terminal=True),
+            },
+            [
+                Transition("start", "a", "role", "aborted", signal=True,
+                           effects=["escalate"]),
+                Transition("start", "b", "role", "mid", signal=True),
+                Transition("mid", "c", "role", "done", signal=True),
+            ],
+        )
+        problems = [p for p in check_machine(m) if "cap" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("start", problems[0])
+
+    def test_a_per_role_cap_is_satisfied_where_a_per_channel_cap_of_the_same_size_is_not(self):
+        # Measured on session-relay at limit 1: per channel reports
+        # `awaiting-answer` at 2; per role reports nothing, because the two
+        # transitions on that run (`answer` by initiator, `conclusion` by
+        # responder) are sent by different roles.
+        channel_m = mutate("cap: 10", "cap: 1")
+        role_m = mutate("cap: 10", "cap: { limit: 1, per: role }")
+        channel_problems = [p for p in check_machine(channel_m) if "cap" in p]
+        role_problems = [p for p in check_machine(role_m) if "cap" in p]
+        self.assertEqual(len(channel_problems), 1, channel_problems)
+        self.assertEqual(role_problems, [])
+
+    def test_an_undeclared_by_on_a_per_role_search_edge_does_not_crash_the_checker(self):
+        # `check_machine` must return every problem and never raise, on
+        # every input -- including this one. `role_index` is built from
+        # `m.roles`, but a transition's `by` is not cross-referenced
+        # against `m.roles` anywhere before phase 2 walks the search
+        # graph by `by`; a typo'd `by` on the one edge phase 2 must
+        # actually traverse (session-relay's `answer`, from the subject
+        # `awaiting-answer`, which phase 1 cannot clear at limit 1) used
+        # to raise `KeyError` out of `_role_cap_satisfiable` instead of
+        # returning a problem list. The undeclared-role problem the
+        # top-of-function loop already reports for this transition is
+        # still present; there is simply no cap message piled on top of
+        # it, the same as any other prerequisite-missing skip in this
+        # function (R3, G3, G4).
+        text = VALID.replace("cap: 10", "cap: { limit: 1, per: role }")
+        assert text != VALID, "the cap splice matched nothing in VALID"
+        old = "on: answer, by: initiator, to: awaiting-triage, signal: true }"
+        assert old in text, "the by splice matched nothing"
+        text = text.replace(
+            old, "on: answer, by: initator, to: awaiting-triage, signal: true }")
+        m = parse(text)
+        problems = check_machine(m)  # must return, not raise
+        self.assertTrue(any("initator" in p for p in problems), problems)
+        self.assertEqual([p for p in problems if "cap" in p], [])
+
+    def test_the_cap_check_is_still_skipped_entirely_when_cap_is_absent(self):
+        # Not merely "an uncapped machine happens to pass": the machine
+        # here is one that *would* fail the cap check for any cap under 2,
+        # and with no cap declared there is nothing to compare against.
+        m = _linear_machine(cap=None)
+        self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
+
+
+class TestCapSearchBudget(unittest.TestCase):
+    """`_MAX_CAP_SEARCH` guards phase 2 of the per-role cap search, whose
+    state space is `len(m.states) * (limit + 1) ** len(m.roles)`. See the
+    comment beside `_MAX_CAP_SEARCH` in machine.py for the measured
+    numbers this pins.
+    """
+
+    def test_a_real_machine_is_far_inside_the_search_budget(self):
+        # Pins the headroom claim so that lowering the constant fails
+        # loudly rather than silently switching real machines onto the
+        # silent path. Derived from the parsed fixtures, not transcribed
+        # as literals: session-relay and paxos-acceptor are free to grow
+        # a state without this test, `_MAX_CAP_SEARCH`'s comment and
+        # SCHEMA.md's "605 / 245" going stale together with nothing to
+        # catch it.
+        session_relay = parse(VALID)
+        paxos_acceptor = parse(GUARDED)
+        self.assertLess(
+            len(session_relay.states)
+            * (session_relay.cap + 1) ** len(session_relay.roles),
+            machine_module._MAX_CAP_SEARCH)
+        self.assertLess(
+            len(paxos_acceptor.states)
+            * (paxos_acceptor.cap + 1) ** len(paxos_acceptor.roles),
+            machine_module._MAX_CAP_SEARCH)
+
+    def test_a_machine_past_the_search_budget_reports_nothing_and_returns(self):
+        # The guard's silent path, actually exercised. Patch the constant
+        # DOWN rather than building a machine with many roles: the suite
+        # must keep running fast. Copies test_registry.py's pattern for
+        # patching a module constant, including the `finally`.
+        m = _phase2_machine(limit=1)
+        original = machine_module._MAX_CAP_SEARCH
+        try:
+            machine_module._MAX_CAP_SEARCH = 1          # below any real product
+            problems = check_machine(m)                 # must return, not hang
+        finally:
+            machine_module._MAX_CAP_SEARCH = original
+        self.assertEqual([p for p in problems if "cap" in p], [], problems)
+
+    def test_the_same_machine_is_reported_when_the_budget_allows_the_search(self):
+        # Without this, the test above passes for a machine that was simply
+        # satisfiable and proves nothing about the guard. THIS is what
+        # makes the silence above attributable to the budget. Asserting
+        # only "some cap problem exists" would also pass if the guard
+        # reported the wrong subject, so name `s0` -- the only one of
+        # `_phase2_machine`'s three subjects that is actually
+        # unsatisfiable (see its docstring).
+        m = _phase2_machine(limit=1)
+        problems = [p for p in check_machine(m) if "cap" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("s0", problems[0])
 
 
 if __name__ == "__main__":
