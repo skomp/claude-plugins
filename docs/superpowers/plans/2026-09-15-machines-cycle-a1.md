@@ -25,8 +25,8 @@ and *"The cap check is weak"*, §10's item 1 and its row-7 paragraph, §11.7, §
 §13's A.1 proposal. **The plan argues from the spec; both travel together, and §"Where this
 plan contradicts its inputs" below lists three places where the spec contradicts itself.**
 
-**Issues:** `claude-operating-rules#31` (typed fields and guards),
-`claude-operating-rules#28` (the backport walk, the weak cap check, the deferred checker
+**Issues:** `claude-plugins#31` (typed fields and guards),
+`claude-plugins#28` (the backport walk, the weak cap check, the deferred checker
 work). Both read 2026-09-15; `#31` has no comments, `#28` has four.
 
 ---
@@ -1718,7 +1718,7 @@ git commit -m "Record cycle A.1 in the machines spec, and settle the cap-scope c
 
 ## After A.1, before B
 
-**Write the outcome into `claude-operating-rules#31` and `claude-operating-rules#28`** — `#31`
+**Write the outcome into `claude-plugins#31` and `claude-plugins#28`** — `#31`
 is the guards issue and can close; `#28`'s first comment lists seven things the schema cannot
 express, and items 1 and 3 are now settled. Say so in a comment there rather than only in the
 spec, because `#28` is where cycle B's planner will look.
