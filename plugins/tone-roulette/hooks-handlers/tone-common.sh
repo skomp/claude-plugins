@@ -28,12 +28,17 @@
 #     grep+sed pull over newline-flattened text is safe here and not a
 #     heuristic). ---
 get_output_style_value() {
-  local project_dir candidates=() f val flattened
+  local project_dir candidates=() f content re
 
-  case "$(uname -s 2>/dev/null)" in
-    Darwin) candidates+=("/Library/Application Support/ClaudeCode/managed-settings.json") ;;
-    Linux)  candidates+=("/etc/claude-code/managed-settings.json") ;;
-  esac
+  # --- Both managed-settings locations are listed unconditionally, macOS's
+  #     first, instead of picking one by `uname -s`. A platform only ever
+  #     has its own path present, so the `[ -f ]`/`[ -r ]` guard below
+  #     selects exactly what the `uname` branch used to select — one fewer
+  #     process on a hook that runs at every session start. ---
+  candidates+=(
+    "/Library/Application Support/ClaudeCode/managed-settings.json"
+    "/etc/claude-code/managed-settings.json"
+  )
 
   project_dir="${CLAUDE_PROJECT_DIR:-$PWD}"
   candidates+=(
@@ -42,12 +47,23 @@ get_output_style_value() {
     "${HOME:-}/.claude/settings.json"
   )
 
+  # --- The extraction is the same newline-flattened "outputStyle" pull it
+  #     always was, done with bash's own builtins instead of a
+  #     tr | printf | grep | head | sed pipeline: `$(<file)` reads without
+  #     exec'ing anything, `${x//.../ }` does the flattening `tr` did, and
+  #     `[[ =~ ]]` + BASH_REMATCH does what grep|head|sed did. Four
+  #     processes per candidate file became none. bash 3.2 supports all
+  #     three (the regex is held in a variable and referenced unquoted,
+  #     which is what 3.2 requires). ---
+  re='"outputStyle"[[:space:]]*:[[:space:]]*"([^"]*)"'
+
   for f in "${candidates[@]}"; do
-    [ -n "$f" ] && [ -r "$f" ] || continue
-    flattened="$(tr '\r\n' '  ' < "$f" 2>/dev/null)"
-    val="$(printf '%s' "$flattened" | grep -o '"outputStyle"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -E 's/^"outputStyle"[[:space:]]*:[[:space:]]*"(.*)"$/\1/')"
-    if [ -n "$val" ]; then
-      printf '%s' "$val"
+    [ -n "$f" ] && [ -f "$f" ] && [ -r "$f" ] || continue
+    content="$(<"$f")"
+    content="${content//$'\r'/ }"
+    content="${content//$'\n'/ }"
+    if [[ $content =~ $re ]] && [ -n "${BASH_REMATCH[1]}" ]; then
+      printf '%s' "${BASH_REMATCH[1]}"
       return 0
     fi
   done
@@ -80,11 +96,21 @@ sanitize_id() {
 #     same session's id to the same string, since both read and write
 #     state keyed on it. ---
 resolve_session_id() {
-  local input="$1" session_id
-  session_id="$(printf '%s' "$input" 2>/dev/null | grep -o '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -E 's/^"session_id"[[:space:]]*:[[:space:]]*"(.*)"$/\1/')"
-  session_id="$(printf '%s' "$session_id" | sanitize_id)"
+  local input="$1" session_id re
+  # --- Same extraction and same hygiene rule as before, using bash's own
+  #     regex match and pattern substitution rather than grep|head|sed plus
+  #     two `tr` calls: five processes per hook invocation became none.
+  #     `${x//[!A-Za-z0-9_.-]/_}` is the exact character class sanitize_id()
+  #     collapses, so "../../escaped" still cannot compose into a path that
+  #     escapes the state directory. ---
+  re='"session_id"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  session_id=""
+  if [[ $input =~ $re ]]; then
+    session_id="${BASH_REMATCH[1]}"
+  fi
+  session_id="${session_id//[!A-Za-z0-9_.-]/_}"
   if [ -z "$session_id" ]; then
-    session_id="$(printf '%s' "$PWD" | sanitize_id)"
+    session_id="${PWD//[!A-Za-z0-9_.-]/_}"
   fi
   if [ -z "$session_id" ]; then
     session_id="_"

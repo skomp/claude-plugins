@@ -51,7 +51,9 @@ set -u
 #     not just startup. Re-injecting the state file's tone over a
 #     deliberate choice on resume/clear/compact is exactly the bug this
 #     guards against. ---
-_TONE_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_TONE_COMMON_DIR="${BASH_SOURCE[0]%/*}"
+[ "$_TONE_COMMON_DIR" = "${BASH_SOURCE[0]}" ] && _TONE_COMMON_DIR="."
+_TONE_COMMON_DIR="$(cd "$_TONE_COMMON_DIR" && pwd)"
 _TONE_COMMON_FILE="$_TONE_COMMON_DIR/tone-common.sh"
 
 # --- Guard the source: a missing, unreadable, truncated or otherwise
@@ -89,6 +91,7 @@ fi
 main() {
   local script_dir styles_dir state_dir input session_id source_val state_file
   local tones=() f base existing selected count idx off_token is_off rolled
+  local _source_re
   local tone_file body escaped_body sys_message escaped_sys_message
 
   # --- Stand down entirely when an output style is explicitly set. This
@@ -111,10 +114,15 @@ main() {
   #     announce, nothing to inject. Print nothing, exit 0. ---
   tones=()
   if [ -d "$styles_dir" ]; then
+    # --- Parameter expansion, not `basename`: this loop runs once per
+    #     catalogue entry, and forking basename 20 times was roughly half
+    #     the handler's entire wall time (~2.6ms per fork on macOS).
+    #     "${f##*/}" strips the directory and "${b%.md}" the suffix —
+    #     exactly what `basename "$f" .md` returned for these paths. ---
     for f in "$styles_dir"/*.md; do
       [ -e "$f" ] || continue
-      base="$(basename "$f" .md)"
-      tones+=("$base")
+      base="${f##*/}"
+      tones+=("${base%.md}")
     done
   fi
   count=${#tones[@]}
@@ -150,12 +158,16 @@ main() {
   #     (startup|resume|clear|compact|fork), and decides whether a leftover
   #     "off" state is honored (everything but startup) or ignored
   #     (startup always rolls fresh — see the off-token handling below). ---
-  source_val="$(printf '%s' "$input" 2>/dev/null | grep -o '"source"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -E 's/^"source"[[:space:]]*:[[:space:]]*"(.*)"$/\1/')"
+  source_val=""
+  _source_re='"source"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  if [[ $input =~ $_source_re ]]; then
+    source_val="${BASH_REMATCH[1]}"
+  fi
 
   # --- State directory. Create if absent; if we can't, we simply can't
   #     persist a resume — still roll and announce below. ---
   state_dir="$(tone_state_dir)"
-  mkdir -p "$state_dir" 2>/dev/null
+  [ -d "$state_dir" ] || mkdir -p "$state_dir" 2>/dev/null
   state_file=""
   if [ -d "$state_dir" ]; then
     state_file="$state_dir/$session_id"
@@ -179,7 +191,9 @@ main() {
   #     into a new session. ---
   selected=""
   if [ "$source_val" != "startup" ] && [ -n "$state_file" ] && [ -f "$state_file" ]; then
-    existing="$(head -n 1 "$state_file" 2>/dev/null | tr -d '\r\n')"
+    existing=""
+    IFS= read -r existing < "$state_file" 2>/dev/null
+    existing="${existing%$'\r'}"
     if [ "$existing" = "$off_token" ]; then
       is_off=1
     elif [ -n "$existing" ]; then
@@ -269,39 +283,36 @@ main() {
   )"
   body="${body%X}"
 
-  # --- JSON-escape the body, in an order where each pass only ever
-  #     introduces backslashes that later passes must NOT re-escape:
-  #       1. existing backslashes: \ -> \\
-  #       2. existing double quotes: " -> \"
-  #       3. C0 control characters other than \n (which pass 4 handles):
-  #          \t and \r get their short forms, everything else in
-  #          U+0000-U+001F becomes \u00XX. (U+0000 itself cannot occur here
-  #          in practice: bash command substitution truncates a captured
-  #          string at the first NUL byte, so there is nothing left by this
-  #          point for the loop below to ever match against 0 — the case is
-  #          included anyway so the escaping is complete on its own terms.)
-  #       4. real newlines -> literal \n
+  # --- JSON-escape the body in ONE awk pass. This used to be four
+  #     chained passes (sed for backslash and quote, awk for the other C0
+  #     controls, awk for newlines), each in its own command substitution
+  #     with its own sentinel dance — six processes and three full copies
+  #     of the body. They were ordered so that no pass re-escaped a
+  #     backslash an earlier pass had introduced; mapping every input
+  #     character exactly once removes that ordering constraint entirely
+  #     rather than preserving it, so the result is the same bytes by
+  #     construction:
+  #       \ -> \\ , " -> \" , TAB -> \t , CR -> \r ,
+  #       every other C0 character -> \u00XX ,
+  #       and a real newline -> literal \n appended per record.
+  #     (U+0000 cannot reach here: bash command substitution truncates the
+  #     captured string at the first NUL byte. The map covers it anyway so
+  #     the escaping is complete on its own terms.)
   #     Shell text processing only, per Global Constraint 3. ---
   escaped_body="$(
     {
-      printf '%s' "$body" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
-      printf 'X'
-    }
-  )"
-  escaped_body="${escaped_body%X}"
-
-  escaped_body="$(
-    {
-      printf '%s' "$escaped_body" | awk '
+      printf '%s' "$body" | awk '
         BEGIN {
           for (c = 0; c <= 31; c++) {
-            if (c == 10) continue  # real newline: pass 4 handles it
+            if (c == 10) continue  # real newline: the printf below handles it
             ch = sprintf("%c", c)
             if (c == 9)       esc = "\\t"
             else if (c == 13) esc = "\\r"
             else              esc = sprintf("\\u%04x", c)
             ctrl_map[ch] = esc
           }
+          ctrl_map["\\"] = "\\\\"
+          ctrl_map["\""]  = "\\\""
         }
         {
           line = $0
@@ -311,17 +322,9 @@ main() {
             ch = substr(line, i, 1)
             out = out ((ch in ctrl_map) ? ctrl_map[ch] : ch)
           }
-          print out
+          printf "%s\\n", out
         }
       '
-      printf 'X'
-    }
-  )"
-  escaped_body="${escaped_body%X}"
-
-  escaped_body="$(
-    {
-      printf '%s' "$escaped_body" | awk '{printf "%s\\n", $0}'
       printf 'X'
     }
   )"

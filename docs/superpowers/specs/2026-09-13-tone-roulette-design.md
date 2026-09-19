@@ -187,8 +187,14 @@ project root (confirmed by reading the installed `claude` binary's strings: hook
 are spawned with `CLAUDE_PROJECT_DIR` already in their env); `$PWD` is the fallback for a
 standalone or test invocation where it is unset.
 
-The extraction is the same grep+sed pull already used for `session_id`/`source`, not `jq` or
-`python` (Global Constraint 3 forbids both in the handler). It is exact, not a heuristic:
+The extraction is the same pull already used for `session_id`/`source`, not `jq` or
+`python` (Global Constraint 3 forbids both in the handler). It is done with bash's own
+builtins — `$(<file)` to read, `${x//$'\r'/ }`/`${x//$'\n'/ }` to flatten, and `[[ =~ ]]`
+with `BASH_REMATCH` to match — rather than the `tr | printf | grep | head | sed` pipeline it
+was first written as. That is a cost change, not a semantic one: the pattern, the
+flattening and the precedence order are unchanged, and the argument below applies to both
+spellings verbatim. The regex is held in a variable and referenced unquoted, which is what
+bash 3.2 requires. It is exact, not a heuristic:
 Claude Code constrains an `outputStyle` value to `^[a-z][a-z0-9_-]*$` (a plugin style's
 catalogue name — confirmed against the same schema string that validates plugin manifest
 names in the 2.1.259 binary) or one of five capitalized built-in names (`Default`,
@@ -279,6 +285,39 @@ the skill points at `/config` rather than performing an equivalent action itself
 Frontmatter sets `disable-model-invocation: true`, so the skill fires only when the user
 types it. A tone plugin that re-rolled itself because the model thought it relevant would be
 a bug.
+
+## Cost
+
+Both handlers block the thing they hook: `SessionStart` delays the first turn of every
+session, `UserPromptSubmit` delays every prompt in every session the plugin is enabled in,
+including the sessions where the plugin has already decided to do nothing. On a shell
+handler this cost is almost entirely `fork`+`exec`, not work — a process spawn measured
+~2.6ms on the author's macOS machine (arm64, Darwin 25.6.0), so the process count is the
+number worth managing, and the body of the script is not.
+
+Measured 2026-09-16 on that machine, 20 runs each, `bash <handler>` with the catalogue at
+20 tones:
+
+| handler | before | after | external processes per run |
+|---|---|---|---|
+| `session-start.sh` (startup roll) | 107ms | 35ms | 40 → 4 |
+| `user-prompt-submit.sh` (impatient active) | 42ms | 26ms | 13 → 4 |
+
+The single largest item was `basename` forked once per catalogue entry to turn
+`output-styles/<name>.md` into `<name>` — 20 processes, ~52ms, roughly half the
+`SessionStart` handler's entire wall time, spent on a string operation `${f##*/}` and
+`${b%.md}` do for free. The rest came from spelling small extractions as pipelines:
+`tr | printf | grep | head | sed` per settings-file candidate (up to four candidates),
+`grep | head | sed` for `session_id` and again for `source`, `head | tr` to read the state
+file, `uname -s` to choose between two managed-settings paths that are never both present,
+and four chained command substitutions to JSON-escape the body where one `awk` pass that
+maps each input character exactly once does the same job — and is order-independent by
+construction, where the four-pass version was only correct because of the order.
+
+None of this changed what either handler emits. The rewrite was verified by running the
+old and new handlers against all 20 catalogue tones × 6 `source` values × both bash 3.2
+(`/bin/bash`) and bash 5, and comparing stdout byte-for-byte: 240 comparisons, all
+identical.
 
 ## Error handling
 
