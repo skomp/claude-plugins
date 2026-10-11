@@ -32,6 +32,10 @@ Two steps, typed into Claude Code. Nothing here installs itself.
 /plugin marketplace add skomp/claude-plugins
 ```
 
+The marketplace registers as `skomp-plugins`, not as the repository's name: Claude Code
+rejects a marketplace called `claude-plugins` as impersonating an official one. Where a
+plugin name needs qualifying, the form is `tone-roulette@skomp-plugins`.
+
 **2. Install the plugins you want.** Each is packaged separately on purpose, so taking one
 never drags in another:
 

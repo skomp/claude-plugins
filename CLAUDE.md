@@ -11,6 +11,18 @@ This repository holds six Claude Code plugins. The skills come from real failure
 in other projects. The project names are redacted. The dates, commands, error strings
 and measurements are verbatim, and you must keep them that way.
 
+## The marketplace name is not the repository name
+
+The repository is `skomp/claude-plugins`. The `name` in `.claude-plugin/marketplace.json`
+is `skomp-plugins`, and the two must stay different. Claude Code rejects a marketplace
+named `claude-plugins` with *"Marketplace name impersonates an official Anthropic/Claude
+marketplace"*, and then the marketplace does not load at all. The name was `claude-plugins`
+from 2026-09-14 to 2026-10-11 and nothing in this repository reported it.
+
+Run `claude plugin validate .` before you commit a change to the marketplace manifest or
+to a `plugin.json`. It also reports a marketplace entry whose `version` differs from the
+plugin's own `plugin.json`.
+
 ## Before you change a skill
 
 Two copies of these skills exist. This repository holds the public, redacted copy. The
