@@ -1,6 +1,6 @@
 {
   "name": "ticket-craft",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Decide where work is tracked and write the ticket in ASD-STE100 Simplified Technical English.",
   "author": { "name": "skomp", "url": "https://github.com/skomp" },
   "homepage": "https://github.com/skomp/claude-plugins",

@@ -9,7 +9,7 @@
     {
       "name": "evidence-discipline",
       "source": "./plugins/evidence-discipline",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "category": "development",
       "description": "Never report something as absent, closed, safe or healthy until the check has been shown to detect its opposite; and never call a fix done until every copy of the same claim is fixed.",
       "author": { "name": "skomp", "url": "https://github.com/skomp" }
@@ -25,7 +25,7 @@
     {
       "name": "ticket-craft",
       "source": "./plugins/ticket-craft",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "category": "productivity",
       "description": "Where work gets written down and how the ticket is worded, using ASD-STE100 Simplified Technical English. Opinionated on purpose, and packaged alone so nothing else drags it in.",
       "author": { "name": "skomp", "url": "https://github.com/skomp" }

@@ -25,36 +25,29 @@ plugin's own `plugin.json`.
 
 ## Before you change a skill
 
-Two copies of these skills exist. This repository holds the public, redacted copy. The
-author keeps a private copy in `~/.claude/skills/`, and that is the copy that actually
-runs, so it is the copy sessions edit in the moment a lesson is learned.
+**This repository is the only copy.** Until 2026-10-14 the author also kept a private,
+unredacted copy of six of these skills in `~/.claude/skills/`, and that copy was often
+*ahead* of this one: whole sections existed only there. On 2026-10-14 every private-only
+rule was ported here — the last two were the "grep the old referent" bullet in
+`completing-a-correction` and the backticks section and pre-merge
+`closingIssuesReferences` probe in `tracking-work` — and the private copies were retired in
+favour of the installed plugins. The retired copies are in `~/.claude/skills/.trash/` if a
+question about the history ever needs them.
 
-**Neither copy is canonical in practice.** This repository is the publication target and
-the place a rule is meant to end up, but the private copy is frequently *ahead*: whole
-sections have existed only there, never in any commit here. Measured 2026-09-13, public
-lines against private: `writing-plans-and-dispatches` 54 / 101 and `tracking-work` 57 / 83
-were each missing an entire rule, and `parallel-sessions` 281 / 363 was missing four
-sections. `completing-a-correction` 30 / 30, `recovering-a-session` 53 / 53 and
-`verifying-claims` 184 / 182 differed only by redaction and voice.
+So a lesson learned in a session is written **here**, not into `~/.claude/skills/`, and
+reaches the running sessions through a release and `claude plugin update`. If a private
+copy of a skill appears again in `~/.claude/skills/`, diff it against this repository
+before anything else, port any content that exists only there, and retire it again.
 
-So before you change either copy:
+When you change a skill:
 
-1. **Diff them first**, per skill, and read the diff:
-   `diff "$(find plugins -name SKILL.md -path "*/<skill>/*")" ~/.claude/skills/<skill>/SKILL.md`
-2. **Expect two kinds of difference and treat them differently.** Redaction and voice
-   differences are correct — the public copy replaces project names and addresses the
-   reader as "you". A missing *heading* is never correct; it is content that exists in one
-   place only.
-3. **Port private-only material into this repository, redacted** — project names replaced
-   with a generic description, dates, commands, measurements, error strings and version
-   numbers kept verbatim. `README.md` under "On provenance" is the rule.
-4. **Never overwrite `~/.claude/skills/` with a copy from here.** On 2026-09-13 a session
-   did exactly that with `cp` and destroyed about 4KB — 108 lines — that existed nowhere
-   else; it was recovered from another session's transcript by luck, and verified
-   byte-exact at 17573 bytes. A plugin reinstall overwrites that directory too, so material
-   that lives only there is one reinstall from gone. Read it, never write it, unless the
-   human asks for that write specifically.
-5. **Prove the redaction with a command before committing**, not by reading:
+1. **Write it redacted from the start** — project names replaced with a generic
+   description; dates, commands, measurements, error strings and version numbers kept
+   verbatim. `README.md` under "On provenance" is the rule.
+2. **Bump the plugin's `version`** in both its `plugin.json` and its marketplace entry.
+   An installed plugin is cached by version, so a change with no bump never reaches an
+   installed copy.
+3. **Prove the redaction with a command before committing**, not by reading:
    `grep -rniE '<real-name>|<real-name>' plugins/ && echo LEAK || echo clean`. A check that
    has only ever passed is not evidence — plant one of the strings in a scratch copy of
    `plugins/` first and confirm the grep reports LEAK.

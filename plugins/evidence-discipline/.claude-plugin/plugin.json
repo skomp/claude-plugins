@@ -1,6 +1,6 @@
 {
   "name": "evidence-discipline",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Prove the check can fail before trusting that it passed, and finish a correction everywhere the claim appears.",
   "author": { "name": "skomp", "url": "https://github.com/skomp" },
   "homepage": "https://github.com/skomp/claude-plugins",
