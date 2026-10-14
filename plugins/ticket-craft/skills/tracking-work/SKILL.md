@@ -79,6 +79,34 @@ So the two rules want different spellings, and both are correct in their place:
 The owner-qualified form satisfies both — it names the repository unambiguously *and* it
 closes. Use it whenever the reference is load-bearing for automation.
 
+### The second way it fails: backticks
+
+A tutorial-authoring project, 2026-09-14. PR: courseware-runner#39 carried
+`Closes owner/courseware-runner#28` and `Closes owner/courseware-runner#29` — the
+owner-qualified form this skill asks for, spelled correctly — and closed neither issue. Both
+were written inside backticks, to set them off typographically in the PR body.
+
+**A closing keyword inside a code span or a fenced block is never parsed.** GitHub linked
+nothing: `closingIssuesReferences` came back empty. The reference is right, the rendering
+looks deliberate and tidy, and the automation sees an inert string.
+
+So a keyword has to be correct twice: the **owner-qualified form**, and **bare prose** — no
+backticks, no fence. The instinct that makes a reference look like a reference is the
+instinct that breaks it.
+
 **Do not trust the close to have happened.** After pushing a commit that claims to close
-something, check: `gh issue list --state open`. The failure is silent by construction, and
-an issue that a commit message says is closed is exactly the issue nobody looks at again.
+something, check each issue directly: `gh issue view <n> --repo <owner/repo> --json state -q
+.state`. The failure is silent by construction, and an issue that a commit message says is
+closed is exactly the issue nobody looks at again. Do not grep `gh issue list` output for
+`#<n>` instead: its columns need not contain that string, and that grep once reported
+still-open issues as closed.
+
+For a **PR** the keyword fires on merge, not on push, so the better probe runs *before*
+merging and does not depend on issue state at all:
+
+```bash
+gh api graphql -f query='{repository(owner:"OWNER",name:"REPO"){pullRequest(number:N){closingIssuesReferences(first:10){nodes{number title}}}}}'
+```
+
+An empty list means GitHub linked nothing, whatever the body looks like. Run it when you
+open the PR, while the fix is one `gh pr edit` rather than a round of manual closes.
