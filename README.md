@@ -56,6 +56,54 @@ before you trust that it passed, and finish a correction everywhere the claim ap
 
 The table below says what each of the others is for, and who should skip it.
 
+### Codex and GitHub Copilot CLI
+
+Five of the six plugins also install into Codex and GitHub Copilot CLI. `tone-roulette`
+does not: it is built on Claude Code output styles and hooks, and it is left out of both
+of the other marketplaces on purpose.
+
+**Codex:**
+
+```
+codex plugin marketplace add skomp/claude-plugins
+codex plugin add evidence-discipline@skomp-plugins
+codex plugin add agent-operations@skomp-plugins
+codex plugin add ticket-craft@skomp-plugins
+codex plugin add session-relay@skomp-plugins
+codex plugin add machines@skomp-plugins
+```
+
+**GitHub Copilot CLI:**
+
+```
+copilot plugin marketplace add skomp/claude-plugins
+copilot plugin install evidence-discipline@skomp-plugins
+copilot plugin install agent-operations@skomp-plugins
+copilot plugin install ticket-craft@skomp-plugins
+copilot plugin install session-relay@skomp-plugins
+copilot plugin install machines@skomp-plugins
+```
+
+What was tested, on 2026-10-16 with codex-cli 0.163.0 and GitHub Copilot CLI 1.0.98:
+both tools add the marketplace from a local checkout and from this GitHub repository at a
+branch, list the five plugins, install
+each one with its skills (2, 3, 1 and 2; `machines` has none), and refuse
+`tone-roulette` with "not found in marketplace". What was **not** tested: a live session
+in either tool, so whether a skill's `description` fires there is unknown.
+
+Know these before you rely on them outside Claude Code:
+
+- **The skills were written for Claude Code.** They name `CLAUDE.md`, subagents and
+  Claude Code commands. The rules carry over; the tool names do not.
+  `recovering-a-session` is about Claude Code transcripts under `~/.claude/projects/`
+  and is of no use elsewhere.
+- **`machines` ships no skill.** Its checker is `plugins/machines/bin/machines-check`.
+  Claude Code puts a plugin's `bin/` on `PATH`. Whether Codex or Copilot CLI does was not
+  checked, so run it by its path there.
+
+The Codex and Copilot manifests are generated from the Claude Code ones by
+`scripts/sync-manifests.py`; edit the files under `.claude-plugin/` and run the script.
+
 ## The six plugins
 
 | Plugin | Install it if | README |

@@ -1,0 +1,68 @@
+{
+  "name": "skomp-plugins",
+  "interface": {
+    "displayName": "skomp plugins"
+  },
+  "plugins": [
+    {
+      "name": "evidence-discipline",
+      "source": {
+        "source": "local",
+        "path": "./plugins/evidence-discipline"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "agent-operations",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-operations"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "ticket-craft",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ticket-craft"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "session-relay",
+      "source": {
+        "source": "local",
+        "path": "./plugins/session-relay"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "machines",
+      "source": {
+        "source": "local",
+        "path": "./plugins/machines"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

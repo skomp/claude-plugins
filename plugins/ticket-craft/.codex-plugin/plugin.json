@@ -1,0 +1,20 @@
+{
+  "name": "ticket-craft",
+  "version": "0.1.2",
+  "description": "Decide where work is tracked and write the ticket in ASD-STE100 Simplified Technical English.",
+  "author": {
+    "name": "skomp",
+    "url": "https://github.com/skomp"
+  },
+  "homepage": "https://github.com/skomp/claude-plugins",
+  "repository": "https://github.com/skomp/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "issues",
+    "tickets",
+    "ste100",
+    "documentation",
+    "tracking"
+  ],
+  "skills": "./skills/"
+}
