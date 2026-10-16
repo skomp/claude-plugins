@@ -23,6 +23,21 @@ Run `claude plugin validate .` before you commit a change to the marketplace man
 to a `plugin.json`. It also reports a marketplace entry whose `version` differs from the
 plugin's own `plugin.json`.
 
+## Codex and Copilot CLI manifests are generated
+
+The files under `.claude-plugin/` are the source of truth. `scripts/sync-manifests.py`
+writes the Codex marketplace (`.agents/plugins/marketplace.json`), the Copilot CLI
+marketplace (`.github/plugin/marketplace.json`) and each plugin's
+`.codex-plugin/plugin.json` from them. Never edit a generated file by hand: change the
+Claude Code manifest, run the script, and commit both. CI runs
+`scripts/sync-manifests.py --check` and fails on a stale file.
+
+Copilot CLI looks for `.github/plugin/marketplace.json` before
+`.claude-plugin/marketplace.json`, so the generated file is the one it uses. That is what
+keeps `tone-roulette` out of it. `tone-roulette` is Claude Code only (output styles and
+hooks), and `CLAUDE_ONLY` in the script lists it. Copilot CLI reads each plugin's
+`.claude-plugin/plugin.json` directly and needs no plugin manifest of its own.
+
 ## Before you change a skill
 
 **This repository is the only copy.** Until 2026-10-14 the author also kept a private,
@@ -46,7 +61,8 @@ When you change a skill:
    verbatim. `README.md` under "On provenance" is the rule.
 2. **Bump the plugin's `version`** in both its `plugin.json` and its marketplace entry.
    An installed plugin is cached by version, so a change with no bump never reaches an
-   installed copy.
+   installed copy. Then run `scripts/sync-manifests.py`, which carries the bump into the
+   Codex manifest; Codex caches by version too.
 3. **Prove the redaction with a command before committing**, not by reading:
    `grep -rniE '<real-name>|<real-name>' plugins/ && echo LEAK || echo clean`. A check that
    has only ever passed is not evidence — plant one of the strings in a scratch copy of

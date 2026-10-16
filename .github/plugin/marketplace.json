@@ -1,0 +1,67 @@
+{
+  "name": "skomp-plugins",
+  "owner": {
+    "name": "skomp",
+    "url": "https://github.com/skomp"
+  },
+  "metadata": {
+    "description": "Operating rules distilled from real failures: prove a claim before you make it, coordinate agents without clobbering each other, and write work down so it can be closed."
+  },
+  "plugins": [
+    {
+      "name": "evidence-discipline",
+      "source": "./plugins/evidence-discipline",
+      "version": "0.1.2",
+      "category": "development",
+      "description": "Never report something as absent, closed, safe or healthy until the check has been shown to detect its opposite; and never call a fix done until every copy of the same claim is fixed.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
+    },
+    {
+      "name": "agent-operations",
+      "source": "./plugins/agent-operations",
+      "version": "0.1.1",
+      "category": "development",
+      "description": "Running more than one agent over one repository: worktrees over branches, disjoint file ownership, never reverting a file that changed under you, what belongs in a plan, and recovering a session too large to resume.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
+    },
+    {
+      "name": "ticket-craft",
+      "source": "./plugins/ticket-craft",
+      "version": "0.1.2",
+      "category": "productivity",
+      "description": "Where work gets written down and how the ticket is worded, using ASD-STE100 Simplified Technical English. Opinionated on purpose, and packaged alone so nothing else drags it in.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
+    },
+    {
+      "name": "session-relay",
+      "source": "./plugins/session-relay",
+      "version": "0.1.0",
+      "category": "development",
+      "description": "One session owns one repository. Work that belongs to another repository becomes an issue filed against it and a signal to the session that owns it; the discussion then happens only in GitHub issue comments, each one naming the session that wrote it.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
+    },
+    {
+      "name": "machines",
+      "source": "./plugins/machines",
+      "version": "0.2.0",
+      "category": "development",
+      "description": "Declare a communication protocol as a state machine next to the prose that explains it, and check it for well-formedness and prefix collisions against every other declared machine before you trust it. Cycle A: the schema and the checker only, no engine, no installer, no dispatcher.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
+    }
+  ]
+}
