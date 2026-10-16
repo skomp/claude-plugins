@@ -85,7 +85,8 @@ copilot plugin install machines@skomp-plugins
 ```
 
 What was tested, on 2026-10-16 with codex-cli 0.163.0 and GitHub Copilot CLI 1.0.98:
-both tools add the marketplace from a local checkout, list the five plugins, install
+both tools add the marketplace from a local checkout and from this GitHub repository at a
+branch, list the five plugins, install
 each one with its skills (2, 3, 1 and 2; `machines` has none), and refuse
 `tone-roulette` with "not found in marketplace". What was **not** tested: a live session
 in either tool, so whether a skill's `description` fires there is unknown.
