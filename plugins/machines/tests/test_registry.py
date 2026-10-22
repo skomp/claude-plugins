@@ -17,6 +17,16 @@ def named(name, prefix, version="v1"):
     return parse(text.replace("version: v1", "version: " + version))
 
 
+def published(name, publisher, prefix, version="v1"):
+    """`named`, with a `publisher` line added -- or none, for `None`."""
+    m_text = VALID.replace("machine: session-relay", "machine: " + name)
+    if publisher is not None:
+        m_text = m_text.replace("machine: " + name,
+                                "machine: %s\npublisher: %s" % (name, publisher))
+    m_text = m_text.replace('prefix: "session-relay:v1 "', 'prefix: "%s"' % prefix)
+    return parse(m_text.replace("version: v1", "version: " + version))
+
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -43,6 +53,36 @@ class TestCheckAll(unittest.TestCase):
         report = check_all([named("alpha", "alpha:v1 ", "v1"),
                             named("alpha", "alpha:v1 ", "v2")])
         self.assertEqual(report.collisions, [])
+
+    # --- claude-plugins#35, defect 1: the skip used to key on `name`
+    # alone, so two publishers who both chose `session-relay` were never
+    # compared. It now keys on `name` and `publisher` together, and the
+    # report names each side `publisher/name`.
+
+    def test_one_name_from_two_publishers_with_one_prefix_collides(self):
+        report = check_all([published("session-relay", "acme", "shared:v1 "),
+                            published("session-relay", "globex", "shared:v1 ")])
+        self.assertEqual(report.collisions,
+                         [("acme/session-relay", "globex/session-relay")])
+
+    def test_two_versions_from_one_publisher_are_not_a_collision(self):
+        report = check_all([published("session-relay", "acme", "shared:v1 ", "v1"),
+                            published("session-relay", "acme", "shared:v1 ", "v2")])
+        self.assertEqual(report.collisions, [])
+
+    def test_one_name_with_and_without_a_publisher_is_compared(self):
+        # Absent and present are different publishers: an unqualified
+        # `session-relay` and `acme/session-relay` are not one protocol.
+        report = check_all([published("session-relay", None, "shared:v1 "),
+                            published("session-relay", "acme", "shared:v1 ")])
+        self.assertEqual(report.collisions,
+                         [("acme/session-relay", "session-relay")])
+
+    def test_a_published_machine_is_reported_under_its_qualified_name(self):
+        bad = published("session-relay", "acme", "shared:v1 ")
+        bad.initial = "nowhere"
+        report = check_all([bad])
+        self.assertEqual(sorted(report.problems), ["acme/session-relay"])
 
     def test_a_malformed_machine_is_reported_under_its_own_name(self):
         bad = named("alpha", "alpha:v1 ")
@@ -199,6 +239,23 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0, out.getvalue())
         self.assertIn("Examined 2 machines", out.getvalue())
         self.assertIn("No collisions found", out.getvalue())
+
+    def test_a_collision_between_two_publishers_prints_both_qualified_names(self):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for publisher in ("acme", "globex"):
+                path = os.path.join(d, publisher + ".md")
+                with open(path, "w") as f:
+                    f.write(VALID.replace(
+                        "machine: session-relay",
+                        "machine: session-relay\npublisher: " + publisher))
+                paths.append(path)
+            with contextlib.redirect_stdout(out):
+                code = main(paths)
+        self.assertEqual(code, 1, out.getvalue())
+        self.assertIn("collision: acme/session-relay and globex/session-relay "
+                      "claim an overlapping prefix\n", out.getvalue())
 
     def test_a_malformed_declaration_exits_1_not_2(self):
         # A file that fails to parse is a problem the checker found, not a

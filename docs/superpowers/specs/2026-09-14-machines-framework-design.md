@@ -663,13 +663,19 @@ verified 2026-09-15 by reading `plugins/machines/lib/machines/registry.py`:**
    `check_machine` is the documented answer to *"is this machine well-formed"*, so a caller
    using it directly used to get no prefix validation at all. `check_machine` now calls
    `prefix_problem` itself; see §11.7.
-2. **The collision skip keys on `name` alone.** `check_all` skips a pair whose `name` matches,
-   on the correct reasoning that one protocol's versions are its history and not a collision.
-   But two *different publishers* who choose one name are skipped by the same line, and they
-   are exactly the collision this check exists to find. **Key it on publisher and name.** This
-   is the schema's missing publisher-qualified identity (§10) showing up as a live hole rather
-   than a limitation.
-3. **`roles` binds only names.** The values under them are unchecked.
+2. **The collision skip keyed on `name` alone — resolved 2026-10-22, `claude-plugins#35`.**
+   `check_all` skipped a pair whose `name` matched, on the correct reasoning that one
+   protocol's versions are its history and not a collision. But two *different publishers*
+   who choose one name were skipped by the same line, and they are exactly the collision this
+   check exists to find. The schema now has an optional `publisher` field, and the skip keys
+   on publisher and name together. Two declarations that both omit `publisher` still count as
+   one protocol, so no existing declaration's verdict changed; one that names a publisher and
+   one that does not are compared. The report names a machine `publisher/name` when it has a
+   publisher.
+3. **`roles` bound only names — resolved 2026-10-22, `claude-plugins#35`.** The value under a
+   role is now the kind of participant that fills it, from a closed set: `repository` or
+   `session`. Any other value fails to parse. The author decided the meaning on 2026-10-22;
+   until then no document stated one.
 
 ### The other check the install runs
 
@@ -904,7 +910,7 @@ a reader of either document gets the same answer:
 | 4 | an epsilon or otherwise internal move. Every transition needs a `kind`, so a state that consumes nothing cannot be left. This is a **limit of the schema**, not merely a consequence of the layering | **open, and now consequential** — see §11.10, where it is what bounds the uncapped-local-loop gap |
 | 5 | an initial state that is the channel's creation | **settled in cycle A** by the explicit `unopened` state and a `triage` transition out of it |
 | 6 | an effect attached to a state rather than to a transition, so a terminal state with two incoming transitions repeats its effects | **open** |
-| 7 | a machine identity qualified by publisher | **open, and it is a live hole, not only a limitation** — §9's collision skip keys on `name` alone |
+| 7 | a machine identity qualified by publisher | **settled 2026-10-22 by `#35`** — the optional `publisher` field; §9's collision skip keys on publisher and name |
 
 **Item 2 splits, and cycle B must not treat the three fields alike:**
 
@@ -1271,8 +1277,8 @@ the cap counts, which depends on §8's classification landing first.
 into `check_machine` (§11.7). The collision skip keyed on `name` alone, and unbound `roles`
 values, were proposed here as natural contents of A.1 alongside items 1 and 2, for the same
 reason — they are checker bugs, and B's verification should not be the place they get fixed —
-**but A.1's ten tasks did not include them; both are still open.** Whoever picks them up next
-should still do it as the same kind of small checker fix, not fold it into B's verification.
+**but A.1's ten tasks did not include them.** Both were fixed afterwards as the same kind of
+small checker fix, on 2026-10-22 under `claude-plugins#35`, before B started.
 
 **The fallback this proposal offered, not taken:** if the author had preferred not to add a
 cycle, the alternative that preserved the argument was to **land item 3's schema change as

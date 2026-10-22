@@ -3,7 +3,7 @@ import yaml
 from .errors import DeclarationError
 from .machine import (FIELDS, REQUIRED, Machine, State, Transition, Field,
                        FIELD_TYPES, NAME, _MAX_PREFIX_LENGTH, Register, FOLDS,
-                       Guard, OP_ATOMS, CAP_SCOPES)
+                       Guard, OP_ATOMS, CAP_SCOPES, ROLE_KINDS)
 
 _FENCE = re.compile(r"^```machine[ \t]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 
@@ -76,6 +76,8 @@ def parse(text):
 
     _require_prefix_length(data["prefix"])
 
+    publisher = _publisher_field(data)
+
     # `cap` is optional, and its absence is meaningful: this protocol
     # declares no bound. No default is substituted -- a cap the publisher
     # did not write is a bound nobody agreed to, and `check_machine` skips
@@ -105,6 +107,15 @@ def parse(text):
     # needed them to be more than mapping keys.
     for role in roles:
         _require_string(role, "roles", "each key of ")
+    # A role's value is the kind of participant that fills it, from the
+    # closed set `ROLE_KINDS` -- see the comment on it in machine.py. A
+    # value outside it (`bystander: human`, `initiator: 3`) used to be
+    # accepted unread.
+    for role, kind in roles.items():
+        if not isinstance(kind, str) or kind not in ROLE_KINDS:
+            raise DeclarationError(
+                "roles value must be one of %s; role %r binds to %r"
+                % (", ".join(ROLE_KINDS), role, kind), field="roles")
 
     fields = _fields_section(data)
     registers = _registers_section(data)
@@ -152,7 +163,31 @@ def parse(text):
         dict(roles), set(kinds), cap,
         data["initial"], states, transitions,
         fields=fields, registers=registers, cap_scope=cap_scope,
+        publisher=publisher,
     )
+
+def _publisher_field(data):
+    """The optional `publisher`: a string, or `None` when absent.
+
+    No default is invented -- a declaration that names no publisher has
+    none, and registry.py's `check_all` treats two such declarations as
+    sharing one (absent), which is what every declaration written before
+    this field existed relies on.
+
+    A written publisher must be a non-empty string with no `/` in it: the
+    spec lays installed machines out as `machines/<publisher>/<name>/
+    <version>/`, and a `/` would put one publisher's machines inside
+    another's directory. An empty string would leave that path segment
+    empty, and would print as `/session-relay` in a report.
+    """
+    if "publisher" not in data:
+        return None
+    publisher = _require_string(data["publisher"], "publisher")
+    if not publisher or "/" in publisher:
+        raise DeclarationError(
+            "publisher must be a non-empty string with no '/', not %r"
+            % (publisher,), field="publisher")
+    return publisher
 
 def _fields_section(data):
     """The optional `fields` mapping: declared header field name to its
