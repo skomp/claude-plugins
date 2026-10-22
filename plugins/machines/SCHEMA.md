@@ -3,13 +3,13 @@
 A machine is a single ` ```machine ` fenced block inside a bundle's `SKILL.md`, next to the
 prose that explains it. `machines.declaration.parse(text)` turns that block into a `Machine`.
 It is a closed language — no expressions, no scripts, no callbacks — so every field below is
-one of the eleven the parser accepts. **Any other top-level field is rejected by name**, not
+one of the twelve the parser accepts. **Any other top-level field is rejected by name**, not
 silently ignored: a publisher who writes `caps: 10` is told about `caps`, not handed a machine
 with a default cap they never asked for.
 
 Every field in this document is required unless its section says otherwise. A required
-field that is missing is rejected by name, the same as an unknown one. **`cap`, `fields`,
-and `registers` are the top-level fields that are optional**; each optional field's absence
+field that is missing is rejected by name, the same as an unknown one. **`publisher`, `cap`,
+`fields` and `registers` are the top-level fields that are optional**; each optional field's absence
 means something specific to it, stated in its own section below.
 
 **Every type in this document is enforced, and every failure names the field.** A field
@@ -49,13 +49,41 @@ exactly one thing.
 The machine's name. Prevents a bundle from shipping a protocol nobody can refer to when two
 machines are compared or reported on.
 
+## `publisher`
+
+**Type:** string, with no `/`. **Optional.** Absent means this machine names no publisher,
+and no default is invented for it.
+
+Who published the machine. `machine` alone does not identify a protocol: two publishers can
+each choose the name `session-relay`, and nothing about the name says which is which. The
+checker identifies a machine by `publisher` and `machine` together. It treats two machines
+as one protocol's history — and skips comparing their prefixes — only when **both** match;
+every other pair is compared. Without this field, two publishers who chose one name would
+never be compared, and a real prefix collision between them would go unreported.
+
+**Two declarations with no `publisher` count as the same publisher.** That keeps every
+declaration written before this field existed behaving exactly as it did. **One with a
+`publisher` and one without count as different**, so `session-relay` and
+`acme/session-relay` are compared like any other two machines.
+
+The checker names a machine `publisher/machine` when a publisher is declared and by its bare
+`machine` name when it is not — in its problems and on each side of a collision — so a
+collision between two publishers' `session-relay` reads as `acme/session-relay and
+globex/session-relay`, not as `session-relay and session-relay`.
+
+**No `/`, and not empty.** An installed machine lives at `machines/<publisher>/<name>/<version>/`;
+a `/` in the publisher would put one publisher's machines inside another's directory, and an
+empty one would leave that path segment blank. Both are rejected by name.
+
 ## `version`
 
 **Type:** string. **Required.**
 
-The machine's version. Two machines with the same `machine` name but different `version`
-strings are different protocols as far as the checker is concerned — this field is what lets
+The machine's version. Two machines with the same `machine` name and `publisher` but
+different `version` strings are distinct installs of one protocol — this field is what lets
 a publisher change a protocol without silently mutating one that peers already installed.
+The checker treats such a pair as that protocol's history and does not compare their
+prefixes; see `publisher`, above.
 
 ## `prefix`
 
@@ -142,7 +170,7 @@ Two further limits, both reported as errors:
 
 ## `roles`
 
-**Type:** mapping of string to string (role name to what it binds to). **Required.**
+**Type:** mapping of role name to participant kind. **Required.**
 
 The set of participants who can hold a state or act in a transition. Every `holder` on a
 state and every `by` on a transition (below) is checked, by `check_machine`, against the names
@@ -150,6 +178,19 @@ declared here. Without this field, a publisher could write `by: bystander` in a 
 and never learn that no such role exists until it is too late to matter. A role named `yes`
 or `no` lands as that literal string, both as the key here and wherever it is referenced —
 see "Scalars mean what you wrote" above.
+
+**A role's value is the kind of participant that fills the role, and there are exactly two:
+`repository` and `session`.** Closed on purpose, for the same reason `fields`' types are: a
+publisher who writes `bystander: human` is told the word is wrong by name, rather than
+getting a machine with a role no transport can seat anyone in — a failure that would
+otherwise surface at run time, far from the declaration that caused it. A value that is not
+a string at all (`initiator: 3`) is rejected the same way.
+
+```yaml
+roles:
+  initiator: repository
+  responder: repository
+```
 
 ## `kinds`
 

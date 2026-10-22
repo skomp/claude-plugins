@@ -19,17 +19,36 @@ One thing this module has to do that `patterns_collide` itself does not:
   while every other machine is still checked against every other, bad
   machine included on neither side.
 
-- Two machines with the same `name` and a different `version` are one
-  protocol's history (an installer keeps old versions on purpose), not a
-  collision, so that pair is skipped. Two machines with *different* names
-  are still compared even when their prefixes are written identically --
-  that is the collision this module exists to find.
+- Two machines with the same `name`, the same `publisher` and a
+  different `version` are one protocol's history (an installer keeps old
+  versions on purpose), not a collision, so that pair is skipped. Two
+  absent publishers count as the same publisher, so every declaration
+  written before `publisher` existed is skipped or compared exactly as it
+  was. Every other pair is compared -- different names, or one name
+  chosen by two publishers (one of them possibly absent) -- even when
+  their prefixes are written identically: that is the collision this
+  module exists to find.
+
+Because a name alone no longer identifies a machine, every place this
+module names one -- a `problems` key, each side of a `collisions` pair --
+uses `label`: `publisher/name` when a publisher is declared, the bare
+`name` when it is not. Otherwise a collision between two publishers'
+`session-relay` would read as `session-relay` and `session-relay`.
 """
 
 import itertools
 
 from .machine import check_machine, prefix_problem
 from .product import patterns_collide
+
+
+def label(m):
+    """The name a report uses for machine `m`: `publisher/name`, or the
+    bare `name` when no publisher is declared. See the module docstring.
+    """
+    if m.publisher is None:
+        return m.name
+    return "%s/%s" % (m.publisher, m.name)
 
 
 class Report(object):
@@ -40,11 +59,11 @@ class Report(object):
       must not read the same as a report that checked ten machines and
       found them all clean -- see the module-level docstring and
       `check_all` below.
-    - `problems`: machine name -> its own list of problems, straight from
+    - `problems`: machine label (see `label`) -> its own list of problems, straight from
       `check_machine` (which includes a prefix that would not compile --
       see `machine.py`'s `prefix_problem`). A machine with no problems of
       its own is absent from this dict, not present with an empty list.
-    - `collisions`: pairs of machine names that can claim the same
+    - `collisions`: pairs of machine labels that can claim the same
       message, each pair as a sorted 2-tuple, each pair listed once, the
       whole list sorted -- so the output is stable across runs.
     """
@@ -57,8 +76,9 @@ class Report(object):
 
 def check_all(machines):
     """Check every machine in `machines` for its own well-formedness, then
-    check every pair of distinctly-named machines against each other for a
-    collision. Returns a `Report`.
+    check every pair of machines that are not one protocol -- not the same
+    `name` *and* `publisher` -- against each other for a collision.
+    Returns a `Report`.
 
     A machine's own problems -- including a prefix pattern that will not
     compile -- come straight from `check_machine`; nothing here re-derives
@@ -94,17 +114,18 @@ def check_all(machines):
         if prefix_problem(m.prefix) is None:
             collidable.append(m)
         if own_problems:
-            problems[m.name] = own_problems
+            problems[label(m)] = own_problems
 
     collisions = []
     for a, b in itertools.combinations(collidable, 2):
-        if a.name == b.name:
+        if a.name == b.name and a.publisher == b.publisher:
             # Same protocol, different (or, degenerately, the same)
-            # version -- kept on purpose, not a collision. See the
-            # module docstring.
+            # version -- kept on purpose, not a collision. Two absent
+            # publishers are equal here (`None == None`); one absent and
+            # one present are not. See the module docstring.
             continue
         if patterns_collide(a.prefix, b.prefix):
-            collisions.append(tuple(sorted((a.name, b.name))))
+            collisions.append(tuple(sorted((label(a), label(b)))))
 
     collisions.sort()
 

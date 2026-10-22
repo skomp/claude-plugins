@@ -14,9 +14,15 @@ from .pattern import PatternError, compile_pattern
 # `fields` and `registers` are optional the same way: a protocol with
 # nothing to guard on declares neither, and gets an empty mapping rather
 # than a required field it never wanted.
-FIELDS = ("machine", "version", "prefix", "roles", "kinds", "fields",
-          "registers", "cap", "initial", "states", "transitions")
-REQUIRED = tuple(f for f in FIELDS if f not in ("cap", "fields", "registers"))
+#
+# `publisher` is optional too, and absent means absent: no publisher is
+# invented for a declaration that names none. It is the other half of a
+# machine's identity -- see registry.py's `check_all`, which compares two
+# machines unless both their `name` and their `publisher` match.
+FIELDS = ("machine", "publisher", "version", "prefix", "roles", "kinds",
+          "fields", "registers", "cap", "initial", "states", "transitions")
+REQUIRED = tuple(f for f in FIELDS
+                 if f not in ("publisher", "cap", "fields", "registers"))
 
 _INFINITY = float("inf")
 
@@ -36,6 +42,14 @@ NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 # can express is arithmetic or boolean; there is no string fold or string
 # ordering defined anywhere in the spec for one to compare against.
 FIELD_TYPES = ("int", "bool")
+
+# The closed set of values a role may bind to: the kind of participant
+# that fills the role. Closed for the same reason `FIELD_TYPES` is: an
+# open word (`human`, `bot`, ...) would let a publisher declare a role no
+# transport can seat anyone in, and the failure would surface at run
+# time, far from the declaration that caused it. `repository` and
+# `session` are the two kinds of participant a channel has today.
+ROLE_KINDS = ("repository", "session")
 
 
 class Field(object):
@@ -198,8 +212,12 @@ CAP_SCOPES = ("channel", "role")
 class Machine(object):
     def __init__(self, name, version, prefix, roles, kinds, cap,
                  initial, states, transitions, fields=None, registers=None,
-                 cap_scope="channel"):
+                 cap_scope="channel", publisher=None):
         self.name = name
+        # Who published this machine, or `None` when the declaration does
+        # not say. Together with `name` it is the machine's identity; see
+        # registry.py's `check_all`.
+        self.publisher = publisher
         self.version = version
         self.prefix = prefix
         self.roles = roles

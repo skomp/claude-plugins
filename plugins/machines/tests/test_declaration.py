@@ -237,6 +237,38 @@ class TestParse(unittest.TestCase):
         m = parse(VALID)
         self.assertEqual(m.fields, {})
 
+    # --- claude-plugins#35, defect 1: `publisher`, optional, and the
+    # other half of a machine's identity (see registry.py).
+
+    def test_publisher_is_accepted_but_not_required(self):
+        self.assertIn("publisher", FIELDS)
+        self.assertNotIn("publisher", REQUIRED)
+        m = parse(VALID.replace("machine: session-relay",
+                                "machine: session-relay\npublisher: acme"))
+        self.assertEqual(m.publisher, "acme")
+
+    def test_an_absent_publisher_is_none_not_a_default(self):
+        self.assertIsNone(parse(VALID).publisher)
+
+    def test_a_non_string_publisher_is_rejected_by_name(self):
+        for value in ("3", "true", "[acme]", "{a: b}"):
+            with self.subTest(value=value):
+                with self.assertRaises(DeclarationError) as ctx:
+                    parse(VALID.replace(
+                        "machine: session-relay",
+                        "machine: session-relay\npublisher: " + value))
+                self.assertEqual(ctx.exception.field, "publisher")
+
+    def test_a_publisher_containing_a_slash_is_rejected_by_name(self):
+        # The spec's install layout is machines/<publisher>/<name>/<version>/.
+        for value in ("acme/tools", "/acme", "acme/", '""'):
+            with self.subTest(value=value):
+                with self.assertRaises(DeclarationError) as ctx:
+                    parse(VALID.replace(
+                        "machine: session-relay",
+                        "machine: session-relay\npublisher: " + value))
+                self.assertEqual(ctx.exception.field, "publisher")
+
     def test_duplicate_state_name_raises(self):
         bad = VALID.replace(
             "- { name: concluded, terminal: true, accepting: true }",
@@ -398,6 +430,36 @@ class TestMalformedInputIsRejectedByNameNotByTraceback(unittest.TestCase):
         self.assert_rejected(
             "roles", _ROLES_BLOCK,
             "roles:\n  1: repository\n  responder: repository\n")
+
+    # claude-plugins#35, defect 2: a role's value is the kind of
+    # participant that fills it, from the closed set ROLE_KINDS.
+
+    def test_a_role_value_outside_the_vocabulary_is_rejected(self):
+        with self.assertRaises(DeclarationError) as ctx:
+            parse(VALID.replace(
+                _ROLES_BLOCK,
+                _ROLES_BLOCK + "  bystander: human\n"))
+        self.assertEqual(ctx.exception.field, "roles")
+        self.assertIn("roles value must be one of repository, session",
+                      str(ctx.exception))
+        self.assertIn("'bystander'", str(ctx.exception))
+
+    def test_a_role_value_that_is_not_a_string_is_rejected(self):
+        for value in ("3", "true", "[repository]", "null"):
+            with self.subTest(value=value):
+                self.assert_rejected(
+                    "roles", _ROLES_BLOCK,
+                    "roles:\n  initiator: %s\n  responder: repository\n"
+                    % value)
+
+    def test_both_shipped_fixtures_bind_roles_to_allowed_kinds(self):
+        fixtures = Path(__file__).parent / "fixtures"
+        relay = parse((fixtures / "valid-session-relay.md").read_text())
+        paxos = parse((fixtures / "valid-paxos-acceptor.md").read_text())
+        self.assertEqual(relay.roles,
+                         {"initiator": "repository", "responder": "repository"})
+        self.assertEqual(paxos.roles,
+                         {"proposer": "session", "acceptor": "session"})
 
     def test_a_states_entry_that_is_not_a_mapping_is_rejected(self):
         self.assert_rejected("states", _A_STATE, "- 5")

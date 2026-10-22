@@ -18,10 +18,10 @@ later cycle.
 
 ## The declaration
 
-A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — eleven
-fields: `machine`, `version`, `prefix`, `roles`, `kinds`, `fields`, `registers`, `cap`,
-`initial`, `states`, `transitions`. All of them are required except `cap`, `fields`, and
-`registers`. Any other top-level field is rejected by name, not silently ignored.
+A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — twelve
+fields: `machine`, `publisher`, `version`, `prefix`, `roles`, `kinds`, `fields`, `registers`,
+`cap`, `initial`, `states`, `transitions`. All of them are required except `publisher`,
+`cap`, `fields`, and `registers`. Each role binds to `repository` or `session`, nothing else. Any other top-level field is rejected by name, not silently ignored.
 `SCHEMA.md` documents every field and why it exists, including the two hazards worth
 knowing before you write a declaration by hand.
 

@@ -55,7 +55,7 @@
     {
       "name": "machines",
       "source": "./plugins/machines",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "development",
       "description": "Declare a communication protocol as a state machine next to the prose that explains it, and check it for well-formedness and prefix collisions against every other declared machine before you trust it. Cycle A: the schema and the checker only, no engine, no installer, no dispatcher.",
       "author": {
