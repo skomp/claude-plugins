@@ -5,6 +5,18 @@
 This project uses GitHub issues, not a `TODO.md`. Label every issue that Claude
 creates with `created-by-claude`.
 
+Every issue also carries two more labels:
+
+- **One `plugin:` label** naming the plugin it belongs to: `plugin:evidence-discipline`,
+  `plugin:agent-operations`, `plugin:ticket-craft`, `plugin:session-relay`,
+  `plugin:tone-roulette`, `plugin:machines`. Use `plugin:marketplace` for packaging and
+  marketplace work that belongs to no single plugin.
+- **One `severity:` label:**
+  - `severity:high`: wrong behaviour or lost data in normal use.
+  - `severity:medium`: a real gap or defect with a workaround, or one that is reachable
+    only sometimes.
+  - `severity:low`: unreachable in normal use, or a design item that is not yet due.
+
 ## What this repository is
 
 This repository holds six Claude Code plugins. The skills come from real failures
