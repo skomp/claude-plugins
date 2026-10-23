@@ -1,6 +1,6 @@
 {
   "name": "ticket-craft",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Decide where work is tracked and write the ticket in ASD-STE100 Simplified Technical English.",
   "author": {
     "name": "skomp",

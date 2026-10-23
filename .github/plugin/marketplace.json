@@ -33,7 +33,7 @@
     {
       "name": "ticket-craft",
       "source": "./plugins/ticket-craft",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "category": "productivity",
       "description": "Where work gets written down and how the ticket is worded, using ASD-STE100 Simplified Technical English. Opinionated on purpose, and packaged alone so nothing else drags it in.",
       "author": {
