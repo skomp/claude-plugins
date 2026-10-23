@@ -28,6 +28,26 @@ gh label create created-by-claude --description "Issue created automatically by 
 
 Worth a one-line tripwire in your `CLAUDE.md` as well, because an unlabelled issue is outward-facing. **CLAUDE.md carries the bare obligation; this skill carries the command and the reasoning.**
 
+## Who writes it: the `ticket-writer` agent
+
+Wording a ticket in STE100 is rule-following, not reasoning, so this plugin ships an agent
+that does it on a smaller model: `ticket-craft:ticket-writer`, on Haiku. Your session keeps
+the parts that need the conversation:
+
+1. **Decide where it goes** (Part 1). Ask the user if the project has no recorded choice.
+   The agent cannot ask.
+2. **Collect the facts** into the dispatch brief: the repository as `owner/repo` (or the
+   issue number to edit, or the `TODO.md` path), what happened, the evidence, what done
+   looks like, and any project labels beyond `created-by-claude`. Paste commands, error
+   strings, paths and measurements verbatim. The agent uses nothing that is not in the
+   brief.
+3. **Dispatch the agent**, one ticket per dispatch.
+4. **Check what it filed** before you report it: `gh issue view <n> --repo <owner/repo>`.
+   Read the title, the labels and every verbatim string against your brief.
+
+If the agent is not available — a tool other than Claude Code, or a session where
+subagents are blocked — write the ticket yourself with the rules below.
+
 ## Part 2 — How it is worded
 
 Every ticket you write uses **ASD-STE100 Simplified Technical English**: GitHub issue titles and bodies, sub-issues, user stories, `TODO.md` entries, acceptance criteria, and edits to an existing issue body.

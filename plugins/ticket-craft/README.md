@@ -1,6 +1,6 @@
 # ticket-craft
 
-One skill, one job: decide where work gets written down, and word it in
+One skill and one agent, one job: decide where work gets written down, and word it in
 ASD-STE100 Simplified Technical English.
 
 ## What it's for
@@ -17,6 +17,21 @@ paths, commands, error strings and API names stay verbatim even where that fight
 style — precision wins over simplification there.
 
 See `skills/tracking-work/SKILL.md` for the full rule set.
+
+**`ticket-writer`** — the agent that does the wording, on Haiku. Your session decides where
+the ticket goes and collects the facts; it then dispatches `ticket-craft:ticket-writer`,
+which reads the skill's wording rules, writes the ticket in STE100, files it, and returns
+the URL. The wording is rule-following, so it does not need your session's model.
+Measured on 2026-10-23: one `TODO.md` entry, written on `claude-haiku-5-5` for $0.0037,
+with every command and path kept verbatim. The agent is Claude Code only; in Codex and
+Copilot CLI the skill tells the session to write the ticket itself.
+
+How a Claude Code agent is built:
+
+- Subagent files, their frontmatter and the `model` field:
+  https://code.claude.com/docs/en/sub-agents
+- Where a plugin keeps its agents (`agents/`) and how they are named
+  (`plugin-name:agent-name`): https://code.claude.com/docs/en/plugins-reference#standard-layout
 
 ## Install it if
 
