@@ -1,0 +1,21 @@
+schema_version: "1"
+name: deep-chain
+description: >
+  Security review of a deliberately-vulnerable SAML SSO portal. The reviewer must
+  find the seeded XML-signature-wrapping assertion-validation chain (the signature
+  is verified over a different element than the one consumed) and must not drown it
+  in benign pattern-match noise. The fixture code is copied into the run's working
+  directory by scaffold.sh; the answer key (fixture/SEEDED.md) is deliberately not
+  copied, so the reviewer is graded against ground truth it never saw.
+runs: 1
+context:
+  scaffold_script: scaffold.sh
+execution:
+  # The security-review orchestrator reads code and dispatches specialist
+  # subagents; it needs Agent plus the read-only inspection tools. Bash is
+  # intentionally not granted: in the eval harness a granted shell requires an OS
+  # sandbox backend, and the review is a pure read/trace task that Read, Glob and
+  # Grep cover.
+  allowed_tools: [Agent, Read, Glob, Grep]
+  max_turns: 80
+  timeout_seconds: 3000
