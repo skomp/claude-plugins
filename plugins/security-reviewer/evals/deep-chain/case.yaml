@@ -1,3 +1,9 @@
+# NOTE ON THE JUDGE MODEL: the LLM graders (found-chain, suppressed-noise) are
+# scored by the judge model, which defaults to haiku and cannot be pinned per
+# case. The default haiku judge has given a false-negative on a long multi-finding
+# report; run this suite with `--judge-model sonnet` for a steadier verdict, e.g.
+#   claude plugin eval plugins/security-reviewer --case deep-chain \
+#     --trust-plugin --scaffold --runs 1 --judge-model sonnet
 schema_version: "1"
 name: deep-chain
 description: >

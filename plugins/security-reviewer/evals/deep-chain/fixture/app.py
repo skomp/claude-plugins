@@ -49,7 +49,6 @@ def assertion_consumer():
 def portal():
     if "user" not in session:
         return redirect("/")
-    # Static landing markup; no untrusted value is interpolated into the page.
     return "<h1>Portal</h1><p>You are signed in.</p>"
 
 

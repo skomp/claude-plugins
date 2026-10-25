@@ -9,10 +9,6 @@ IDP_SSO_URL = os.environ.get(
     "PORTAL_IDP_SSO_URL", "https://idp.example-portal.test/sso"
 )
 
-# The signing/session secret is taken from the environment in every real
-# deployment. The fallback below is a clearly labelled development-only
-# placeholder, and the app refuses to start outside development without a real
-# secret set.
 SECRET_KEY = os.environ.get("PORTAL_SECRET_KEY")
 if SECRET_KEY is None:
     if os.environ.get("FLASK_ENV") == "development":

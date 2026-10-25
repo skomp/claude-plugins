@@ -1,13 +1,10 @@
 """SAML response handling for the portal SSO flow.
 
-TEST FIXTURE ONLY (see README.md). This module carries a deliberately seeded
-flaw. The XML-DSig handling here is a simplified stand-in: a signature is a keyed
-MAC (HMAC-SHA256) over the canonicalized referenced element, using the identity
-provider's signing key, which is provisioned out of band and injected through the
-environment -- it is never in this source and never travels in the response, so a
-remote caller cannot forge a SignatureValue. A real deployment would use
-asymmetric XML-DSig; the trust relationships modelled here are faithful to one,
-and that is where the seeded flaw lives.
+Signatures use a keyed MAC (HMAC-SHA256) over the canonicalized referenced
+element, under the identity provider's signing key, which is provisioned out of
+band and read from the environment rather than from this source or the response.
+This is a compact stand-in for asymmetric XML-DSig; the surrounding trust
+relationships match a real deployment.
 """
 
 import hashlib
@@ -21,10 +18,8 @@ NS = {
     "ds": "http://www.w3.org/2000/09/xmldsig#",
 }
 
-# The identity provider's signing key. Provisioned out of band and read from the
-# environment, exactly like a real private key: it is not in source and is not
-# sent in the SAML response, so an attacker cannot compute a valid signature over
-# content of their choosing.
+# The identity provider's signing key, provisioned out of band and read from the
+# environment.
 _IDP_SIGNING_KEY = os.environ.get("PORTAL_IDP_SIGNING_KEY", "").encode("utf-8")
 
 
@@ -80,15 +75,16 @@ def verify_signature(doc):
         raise SamlError("only same-document signature references are supported")
     signed_id = uri[1:]
 
-    # Locate the element the signature actually covers -- by ID, anywhere in the
-    # tree -- and verify the MAC over exactly that element.
     signed_elem = _find_by_id(doc, signed_id)
     if signed_elem is None:
         raise SamlError("signed element not found")
 
     sigval_node = sig.find(".//ds:SignatureValue", NS)
     sigval = sigval_node.text if sigval_node is not None else None
-    if sigval is None or not hmac.compare_digest(sigval, _signature_over(signed_elem)):
+    expected = _signature_over(signed_elem)
+    if sigval is None or not hmac.compare_digest(
+        sigval.encode("utf-8"), expected.encode("utf-8")
+    ):
         raise SamlError("signature invalid")
 
     return True

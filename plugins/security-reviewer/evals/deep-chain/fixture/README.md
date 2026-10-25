@@ -24,5 +24,5 @@ resemblance to a real system is coincidental.
 ## Scope for a reviewer
 
 Review it as if it were a real codebase: find the flaws that an attacker can
-actually reach and drive, rank them by how exploitable and how damaging they are,
-and do not pad the report with pattern matches that have no trigger path.
+actually reach and drive, and rank them by how exploitable and how damaging they
+are.

@@ -12,8 +12,6 @@ Either way, read the code to understand it, trace untrusted input from each entr
 point to where it is used, and produce a single ranked report of the findings.
 Rank by how exploitable and how damaging each finding is, most serious first. For
 each finding give its location(s), the trust path from attacker-controlled input
-to the dangerous sink, a concrete step-by-step failure scenario, and the fix. Do
-not pad the report with pattern matches that have no attacker-reachable trigger
-path.
+to the dangerous sink, a concrete step-by-step failure scenario, and the fix.
 
 Produce the full ranked report as your final message.

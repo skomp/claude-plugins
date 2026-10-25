@@ -13,7 +13,6 @@ def connect():
 
 
 def get_user(conn, username):
-    # Parameterized query: the username is bound, never interpolated.
     cur = conn.execute(
         "SELECT username, role FROM users WHERE username = ?", (username,)
     )
@@ -21,8 +20,6 @@ def get_user(conn, username):
 
 
 def seed_demo_users(conn):
-    # Internal bootstrap only. The id is a loop counter and the name/role come
-    # from the fixed _DEMO_USERS list above; none of it is request-derived.
     for i, (name, role) in enumerate(_DEMO_USERS):
         conn.execute(
             f"INSERT INTO users (id, username, role) VALUES ({i}, '{name}', '{role}')"
