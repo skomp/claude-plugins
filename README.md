@@ -1,13 +1,15 @@
 # claude-plugins
 
-Six Claude Code plugins, of four kinds. Three hold rules that were learned the
+Seven Claude Code plugins, of five kinds. Three hold rules that were learned the
 expensive way — each one traceable to a specific failure, with the measurement that
 exposed it kept intact. `session-relay` is a design, specified and built in one session
 on 2026-09-13, with no incident behind it. `tone-roulette` is neither: a demonstration
 of what a plugin can do beyond skills, and a joke. `machines` is not a rule at all: it
 is a schema and a checker — a declaration language for a communication protocol, and the
 tool that checks a declaration for well-formedness and for collisions against its peers.
-Each row in the table below says which kind it is, because the four are not
+`security-reviewer` is an orchestrator agent that dispatches specialist subagents to
+review a codebase for security flaws. Each row in the table below says which kind it is,
+because the five are not
 interchangeable and the difference is the point.
 
 Nothing in the first three is advice in the abstract. Every rule there exists because
@@ -46,6 +48,7 @@ never drags in another:
 /plugin install session-relay
 /plugin install tone-roulette
 /plugin install machines
+/plugin install security-reviewer --marketplace skomp/claude-plugins
 ```
 
 Or run `/plugin` and pick from the menu.
@@ -58,7 +61,7 @@ The table below says what each of the others is for, and who should skip it.
 
 ### Codex and GitHub Copilot CLI
 
-Five of the six plugins also install into Codex and GitHub Copilot CLI. `tone-roulette`
+Six of the seven plugins also install into Codex and GitHub Copilot CLI. `tone-roulette`
 does not: it is built on Claude Code output styles and hooks, and it is left out of both
 of the other marketplaces on purpose.
 
@@ -104,7 +107,7 @@ Know these before you rely on them outside Claude Code:
 The Codex and Copilot manifests are generated from the Claude Code ones by
 `scripts/sync-manifests.py`; edit the files under `.claude-plugin/` and run the script.
 
-## The six plugins
+## The seven plugins
 
 | Plugin | Install it if | README |
 |---|---|---|
@@ -114,6 +117,7 @@ The Codex and Copilot manifests are generated from the Claude Code ones by
 | **session-relay** | Your project spans multiple repositories, each with its own live Claude session, and you track work in GitHub issues. Skip it if you work in one repository alone, or that repository tracks work on a `TODO.md` — both are hard preconditions the protocol refuses to run without | [plugins/session-relay/README.md](plugins/session-relay/README.md) |
 | **tone-roulette** | You want a demonstration of what a plugin can do beyond skills — output styles, a `SessionStart` hook and a `UserPromptSubmit` hook, two shell handlers sharing common code — rather than another rule. It is a joke, not a lesson: it rolls a random conversational tone at session start and holds it for the session. Skip it if you only want the operating rules | [plugins/tone-roulette/README.md](plugins/tone-roulette/README.md) |
 | **machines** | You are declaring a communication protocol as a state machine and want it checked for well-formedness and for prefix collisions against its peers before you trust it. Cycle A ships the schema and the checker only — no engine, no installer, no dispatcher. Skip it if you want something that actually runs a protocol; that is not built yet | [plugins/machines/README.md](plugins/machines/README.md) |
+| **security-reviewer** | You want a security review of a codebase from an agent that triages entry points and trust boundaries, dispatches one specialist reviewer per concern, and returns one ranked report. It writes a failure scenario and a fix for each finding, never exploit code. Skip it if you want a proof-of-concept exploit, or a review of code you may not review | [plugins/security-reviewer/README.md](plugins/security-reviewer/README.md) |
 
 ## tone-roulette: known limitations
 

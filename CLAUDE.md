@@ -19,7 +19,7 @@ Every issue also carries two more labels:
 
 ## What this repository is
 
-This repository holds six Claude Code plugins. The skills come from real failures
+This repository holds seven Claude Code plugins. The skills come from real failures
 in other projects. The project names are redacted. The dates, commands, error strings
 and measurements are verbatim, and you must keep them that way.
 
