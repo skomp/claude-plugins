@@ -28,6 +28,13 @@ here so the decisions are legible:
    route (plugin `settings.json "agent"`) is the documented fallback of last
    resort, rejected as default because it would consume the whole session instead
    of being invokable on demand.
+   **Spike result (2026-10-25):** nested dispatch confirmed — a subagent dispatched
+   a sub-subagent and received its result, so an orchestrator invoked as a subagent
+   can dispatch specialists (depth-2, within the depth-3 limit). Decision taken:
+   dispatch specialists as `general-purpose` subagents carrying orchestrator-composed
+   briefs (brief text kept as separate `agents/*.md` files, passed at dispatch time),
+   rather than depending on the undocumented named-sibling-dispatch-from-a-subagent
+   path. Robust regardless of that path, and the briefs stay individually reviewable.
 2. **Is a behavioral eval in scope this cycle?** **Yes** — author decision. A
    seeded-vulnerability fixture the reviewer must find the chain in, with pass
    criteria for *found the real chain* and *suppressed the generic noise*, wired as
