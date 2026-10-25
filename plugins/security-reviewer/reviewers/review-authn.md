@@ -16,4 +16,4 @@ Review only this concern, and only within the scoped files and regions you are g
 
 ## Output
 
-Return each finding using the REPORT-CONTRACT template provided to you; emit nothing for a concern you cannot substantiate with a concrete trigger path. Fill every field by its exact name (concern, title, locations, trust path, severity, exploitability, failure scenario, explanation, fix-and-harden). Set `concern` to `authn`. If you find nothing, say "no findings" and list the files you read.
+Return each finding using the REPORT-CONTRACT template provided to you; do not emit filler or pattern matches as real findings; a candidate you examined but cannot substantiate with a trigger path goes in marked `exploitability: none` per the contract (the orchestrator drops and counts it), not silently omitted. Fill every field by its exact name (concern, title, locations, trust path, severity, exploitability, failure scenario, explanation, fix-and-harden). Set `concern` to `authn`. If you find nothing, say "no findings" and list the files you read.

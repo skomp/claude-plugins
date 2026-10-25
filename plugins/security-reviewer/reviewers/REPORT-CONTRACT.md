@@ -53,3 +53,10 @@ candidate. A trigger path is a trust path you can trace in the code from an inpu
 attacker controls to the flaw. "This function looks unsafe" is not a trigger path. If you
 cannot trace one, say so in `explanation`, mark `exploitability: none`, and let the
 orchestrator drop it. Never invent a path to keep a finding.
+
+Exposure, disclosure and misconfiguration concerns (a hardcoded production secret, a
+committed private key, a world-readable config) have no attacker-input dataflow. For these
+the trust path may be `secret or setting present in source / artifact / logs -> disclosure
+to a party with that access`, and reachability by exposure IS a valid trigger path. Do not
+mark such a finding `none`, and do not let it be dropped, merely because no input-to-sink
+dataflow exists.

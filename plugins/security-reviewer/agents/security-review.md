@@ -17,7 +17,7 @@ The contract and the specialist briefs live in the plugin's `reviewers/` directo
 depend on an unresolved variable. Resolve the directory like this: if `${CLAUDE_PLUGIN_ROOT}`
 is populated (a real path, not the literal text), use `${CLAUDE_PLUGIN_ROOT}/reviewers/`.
 Otherwise Glob for `**/security-reviewer/reviewers/*.md` and use the directory of the
-match. Call it `REVIEWERS` below. Confirm a Read of `REVIEWERS/REPORT-CONTRACT.md` works
+match (the fallback globs from your cwd, the audited codebase, so it assumes the plugin tree is reachable under cwd; `${CLAUDE_PLUGIN_ROOT}` is the normal path). Call it `REVIEWERS` below. Confirm a Read of `REVIEWERS/REPORT-CONTRACT.md` works
 before you go on.
 
 ## Tools
