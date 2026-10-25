@@ -20,6 +20,8 @@ nine fields, in this order, with these names. Do not add fields. Do not rename t
 - **fix-and-harden:** <the fix, plus the hardening that stops the class of bug>
 ```
 
+The `### <title>` heading must equal the value of the `title` field.
+
 ## Fields
 
 1. **concern** - the review area that found it: `injection`, `crypto`, `authn`,
