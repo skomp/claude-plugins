@@ -82,14 +82,14 @@ class TestCheckAll(unittest.TestCase):
         bad = published("session-relay", "acme", "shared:v1 ")
         bad.initial = "nowhere"
         report = check_all([bad])
-        self.assertEqual(sorted(report.problems), ["acme/session-relay"])
+        self.assertEqual(sorted(report.problems), ["acme/session-relay@v1"])
 
     def test_a_malformed_machine_is_reported_under_its_own_name(self):
         bad = named("alpha", "alpha:v1 ")
         bad.initial = "nowhere"
         report = check_all([bad, named("beta", "beta:v1 ")])
-        self.assertIn("alpha", report.problems)
-        self.assertNotIn("beta", report.problems)
+        self.assertIn("alpha@v1", report.problems)
+        self.assertNotIn("beta@v1", report.problems)
 
     # --- gap found while preparing this task: a prefix that won't compile
     # (unparseable, or nullable -- see pattern.py's compile_pattern) must
@@ -103,8 +103,8 @@ class TestCheckAll(unittest.TestCase):
         # and compile_pattern's nullability check.
         bad = named("badpattern", "x*")
         report = check_all([bad, named("beta", "beta:v1 ")])
-        self.assertIn("badpattern", report.problems)
-        self.assertNotIn("beta", report.problems)
+        self.assertIn("badpattern@v1", report.problems)
+        self.assertNotIn("beta@v1", report.problems)
         self.assertEqual(report.collisions, [])
 
     def test_a_good_pair_either_side_of_a_bad_machine_still_collides(self):
@@ -112,7 +112,7 @@ class TestCheckAll(unittest.TestCase):
         alpha = named("alpha", "shared:v1 ")
         beta = named("beta", "shared:v1 ")
         report = check_all([alpha, bad, beta])
-        self.assertIn("badpattern", report.problems)
+        self.assertIn("badpattern@v1", report.problems)
         self.assertEqual(report.collisions, [("alpha", "beta")])
         self.assertEqual(report.examined, 3)
 
@@ -129,8 +129,8 @@ class TestCheckAll(unittest.TestCase):
     def test_a_deeply_nested_prefix_is_reported_not_raised(self):
         deep = named("deepprefix", "(" * 199 + "a" + ")" * 199)
         report = check_all([deep, named("beta", "beta:v1 ")])
-        self.assertIn("deepprefix", report.problems)
-        self.assertNotIn("beta", report.problems)
+        self.assertIn("deepprefix@v1", report.problems)
+        self.assertNotIn("beta@v1", report.problems)
         self.assertEqual(report.collisions, [])
 
     def test_a_moderately_nested_prefix_is_not_reported_as_a_problem(self):
@@ -138,7 +138,7 @@ class TestCheckAll(unittest.TestCase):
         # well under the 100-level limit.
         ok = named("okprefix", "(" * 60 + "a" + ")" * 60)
         report = check_all([ok])
-        self.assertNotIn("okprefix", report.problems)
+        self.assertNotIn("okprefix@v1", report.problems)
 
     def test_a_raw_recursion_error_is_still_reported_not_raised(self):
         # Exercises the RecursionError backstop directly (not the parser's
@@ -154,9 +154,9 @@ class TestCheckAll(unittest.TestCase):
             report = check_all([deep, named("beta", "beta:v1 ")])
         finally:
             pattern_module._MAX_GROUP_DEPTH = original_limit
-        self.assertIn("deepprefix", report.problems)
-        self.assertIn("too deeply nested", report.problems["deepprefix"][0])
-        self.assertNotIn("beta", report.problems)
+        self.assertIn("deepprefix@v1", report.problems)
+        self.assertIn("too deeply nested", report.problems["deepprefix@v1"][0])
+        self.assertNotIn("beta@v1", report.problems)
         self.assertEqual(report.collisions, [])
 
     # --- gap found by the commit that moved prefix validation into
@@ -169,9 +169,49 @@ class TestCheckAll(unittest.TestCase):
         bad.prefix = "a*"
         report = check_all([bad, named("beta", "beta:v1 ")])
         self.assertEqual(
-            len([p for p in report.problems["alpha"] if "prefix" in p]), 1,
-            report.problems["alpha"])
+            len([p for p in report.problems["alpha@v1"] if "prefix" in p]), 1,
+            report.problems["alpha@v1"])
         self.assertEqual(report.collisions, [])   # excluded from collision checking
+
+    # --- claude-plugins#43: `problems` was keyed on `label` alone, which
+    # carries the publisher and the name but not the version. An installer
+    # keeps old versions on purpose, so two versions of one machine are a
+    # normal thing to hand `check_all` -- and the second one's entry
+    # replaced the first one's, so the report showed only the problems of
+    # whichever version happened to come last. The key carries the version
+    # now, and the collision list is deduplicated for the same reason: two
+    # versions of one protocol each colliding with a third machine is one
+    # finding about two protocols, not the same pair reported twice.
+
+    def test_two_versions_of_one_machine_each_report_their_own_problem(self):
+        v1 = named("alpha", "alpha:v1 ", "v1")
+        v1.initial = "nowhere"
+        v2 = named("alpha", "alpha:v1 ", "v2")
+        v2.initial = "elsewhere"
+        report = check_all([v1, v2])
+        reported = sorted(
+            msg for msgs in report.problems.values() for msg in msgs)
+        self.assertEqual(reported, ["initial state 'elsewhere' is not declared",
+                                    "initial state 'nowhere' is not declared"])
+
+    def test_a_problem_is_reported_under_the_version_that_has_it(self):
+        v1 = named("alpha", "alpha:v1 ", "v1")
+        v1.initial = "nowhere"
+        v2 = named("alpha", "alpha:v1 ", "v2")
+        report = check_all([v1, v2])
+        self.assertEqual(sorted(report.problems), ["alpha@v1"])
+
+    def test_a_published_machine_carries_both_its_publisher_and_its_version(self):
+        bad = published("session-relay", "acme", "shared:v1 ", "v2")
+        bad.initial = "nowhere"
+        report = check_all([bad])
+        self.assertEqual(sorted(report.problems), ["acme/session-relay@v2"])
+
+    def test_one_pair_of_protocols_collides_once_however_many_versions(self):
+        report = check_all([named("alpha", "shared:v1 ", "v1"),
+                            named("alpha", "shared:v1 ", "v2"),
+                            named("beta", "shared:v1 ")])
+        self.assertEqual(report.collisions, [("alpha", "beta")])
 
 
 class TestCli(unittest.TestCase):
@@ -256,6 +296,30 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 1, out.getvalue())
         self.assertIn("collision: acme/session-relay and globex/session-relay "
                       "claim an overlapping prefix\n", out.getvalue())
+
+    # --- claude-plugins#43, through the shipped CLI: a reader has to be
+    # able to see which version of a machine the problem is in. The two
+    # declarations below are one protocol's history -- same name, same
+    # (absent) publisher, different versions -- and only the older one is
+    # malformed.
+
+    def test_a_problem_is_printed_with_the_version_that_has_it(self):
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            paths = []
+            for version, initial in (("v1", "nowhere"), ("v2", "unopened")):
+                path = os.path.join(d, version + ".md")
+                with open(path, "w") as f:
+                    f.write(VALID.replace("version: v1", "version: " + version)
+                                 .replace("initial: unopened",
+                                          "initial: " + initial))
+                paths.append(path)
+            with contextlib.redirect_stdout(out):
+                code = main(paths)
+        self.assertEqual(code, 1, out.getvalue())
+        self.assertIn("session-relay@v1: initial state 'nowhere' is not declared\n",
+                      out.getvalue())
+        self.assertNotIn("session-relay@v2:", out.getvalue())
 
     def test_a_malformed_declaration_exits_1_not_2(self):
         # A file that fails to parse is a problem the checker found, not a

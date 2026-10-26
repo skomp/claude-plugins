@@ -67,9 +67,15 @@ declaration written before this field existed behaving exactly as it did. **One 
 `acme/session-relay` are compared like any other two machines.
 
 The checker names a machine `publisher/machine` when a publisher is declared and by its bare
-`machine` name when it is not — in its problems and on each side of a collision — so a
-collision between two publishers' `session-relay` reads as `acme/session-relay and
-globex/session-relay`, not as `session-relay and session-relay`.
+`machine` name when it is not, so a collision between two publishers' `session-relay` reads
+as `acme/session-relay and globex/session-relay`, not as `session-relay and session-relay`.
+
+**A problem carries the version as well: `publisher/machine@version`.** A collision is a
+statement about two protocols, and it holds for every version of either one, so each side of
+a collision is named without a version. A problem is a statement about one version — an
+installer keeps old versions on purpose, and a defect a publisher fixed in `v2` is still in
+`v1` — so `acme/session-relay@v1: initial state 'nowhere' is not declared` says which
+version a reader must open.
 
 **No `/`, and not empty.** An installed machine lives at `machines/<publisher>/<name>/<version>/`;
 a `/` in the publisher would put one publisher's machines inside another's directory, and an
