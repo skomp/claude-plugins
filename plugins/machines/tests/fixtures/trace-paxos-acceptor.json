@@ -1,0 +1,56 @@
+{
+  "channel": "paxos://example/instance/1",
+  "machine": "paxos-acceptor",
+  "version": "v1",
+  "total_order": true,
+  "messages": [
+    {
+      "kind": "prepare",
+      "by": "proposer",
+      "envelope": {
+        "clock": 1,
+        "sender": "p1",
+        "channel_order": 101
+      },
+      "fields": {
+        "ballot": 5
+      },
+      "world_reads": []
+    },
+    {
+      "kind": "promise",
+      "by": "acceptor",
+      "envelope": {
+        "clock": 2,
+        "sender": "a1",
+        "channel_order": 102
+      },
+      "fields": {},
+      "world_reads": []
+    },
+    {
+      "kind": "accept-request",
+      "by": "proposer",
+      "envelope": {
+        "clock": 3,
+        "sender": "p1",
+        "channel_order": 103
+      },
+      "fields": {
+        "ballot": 5
+      },
+      "world_reads": []
+    },
+    {
+      "kind": "accepted",
+      "by": "acceptor",
+      "envelope": {
+        "clock": 4,
+        "sender": "a1",
+        "channel_order": 104
+      },
+      "fields": {},
+      "world_reads": []
+    }
+  ]
+}

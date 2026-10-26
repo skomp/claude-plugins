@@ -1,0 +1,52 @@
+{
+  "channel": "https://github.com/skomp/example/issues/1",
+  "machine": "session-relay",
+  "version": "v1",
+  "total_order": true,
+  "messages": [
+    {
+      "kind": "triage",
+      "by": "initiator",
+      "envelope": {
+        "clock": 1,
+        "sender": "repo-a",
+        "channel_order": 101
+      },
+      "fields": {},
+      "world_reads": []
+    },
+    {
+      "kind": "question",
+      "by": "responder",
+      "envelope": {
+        "clock": 2,
+        "sender": "repo-b",
+        "channel_order": 102
+      },
+      "fields": {},
+      "world_reads": []
+    },
+    {
+      "kind": "answer",
+      "by": "initiator",
+      "envelope": {
+        "clock": 3,
+        "sender": "repo-a",
+        "channel_order": 103
+      },
+      "fields": {},
+      "world_reads": []
+    },
+    {
+      "kind": "conclusion",
+      "by": "responder",
+      "envelope": {
+        "clock": 4,
+        "sender": "repo-b",
+        "channel_order": 104
+      },
+      "fields": {},
+      "world_reads": []
+    }
+  ]
+}
