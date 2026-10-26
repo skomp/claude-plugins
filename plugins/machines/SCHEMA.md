@@ -914,9 +914,14 @@ something that verifies what a conversation means. It does not.
    because no message exists yet. The checker additionally cannot tell you that a guard never
    fires at all, and the engine does not make up the difference.
 5. **Whether the transport told the truth.** A buggy or hostile transport can misreport which
-   messages exist. It cannot forge a transition, skip the cap or fake a terminal state,
-   because the engine is what counts and what decides. But the engine folds the trace it was
-   handed, and a trace is only as honest as whoever produced it.
+   messages exist: it can leave one out, or add one nobody sent. **Leaving messages out does
+   change the folded state, and a trace with messages missing can let a role past a cap it
+   would otherwise have hit.** What holds is narrower, and it is about the trace and not
+   about the conversation: given the message list it was handed, the engine is what folds,
+   counts and decides, so a transport cannot make it accept a transition the declaration does
+   not have, exceed the cap the declaration sets, or report a state the declaration does not
+   define. What a transport *can* do is change which trace the engine sees, and every
+   guarantee here ends at that trace. A trace is only as honest as whoever produced it.
 6. **Anything outside the channel.** The engine carries a world read into the verdict and
    **never branches on it**. That is pinned by a test rather than a comment: the same trace
    with wildly different world-read payloads must give an identical verdict. A world read

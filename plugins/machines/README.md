@@ -76,8 +76,10 @@ only in `SCHEMA.md`, which has it in full.
 4. **Whether a guard will fire.** `may_send` names a guarded offer without evaluating it, as
    no message exists yet. The checker cannot tell you a guard never fires either.
 5. **Whether the transport told the truth.** A hostile transport can misreport which messages
-   exist. The engine folds the trace it was handed, and a trace is only as honest as whoever
-   produced it.
+   exist, and leaving messages out changes the state and can let a role past its cap. Given
+   the trace it was handed, the engine cannot be made to accept a transition the declaration
+   lacks, exceed its cap or report an undefined state; every guarantee is about the trace, not
+   the conversation.
 6. **Anything outside the channel.** A world read is carried into the verdict and the engine
    never branches on it.
 7. **The clock is not `seq`, and `remaining` is not an ordinal.** One sender's tenth message
