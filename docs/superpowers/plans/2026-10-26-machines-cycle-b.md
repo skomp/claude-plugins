@@ -1544,7 +1544,18 @@ it, not the transport's declaration file. See *decision 3*.
 
 ---
 
-## Decisions this plan could not make, and the author should
+## Decisions this plan could not make — all six settled on 2026-10-26
+
+**Every recommendation below was accepted. Implement the recommendation, not the alternative.**
+
+- **Decisions 1 and 2 are the author's**, answered on 2026-10-26. Decision 1: the headroom is a
+  mapping over every declared role, in both cap scopes. Decision 2: a clock above `max(seen) + 1`
+  reports `order: "out-of-order"` and names the gap in the refusal's detail, for example
+  `"clock 9 follows nothing seen; highest seen is 6"`.
+- **Decisions 3, 4, 5 and 6 are the controller's**, taken as recommended on the same day.
+
+The questions and the reasoning are kept below exactly as the plan asked them, because a reader
+who meets the answer in the code needs to see what the alternative was and what it cost.
 
 Each is stated as a question, with a recommendation, and each is cheap to change before the task
 that depends on it.
@@ -1591,8 +1602,8 @@ that depends on it.
 ## Housekeeping
 
 - **Do not `git add -A` or `git commit -a`.** Stage the explicit paths each task names.
-  `plugins/machines/lib/machines/__pycache__/` is untracked and this repository has **no
-  `.gitignore`**.
+  `plugins/machines/lib/machines/__pycache__/` is untracked and ignored by
+  `plugins/machines/.gitignore`; the repository root has no `.gitignore` of its own.
 - **Run `git status --short` before every commit** and confirm nothing unexpected is staged.
 - **Commit messages end with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`** and nothing
   after it. **No `claude.ai/code/session_*` URL** in a commit message, a code comment, a document
