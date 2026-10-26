@@ -945,8 +945,12 @@ it found a defect nothing predicted — which is the outcome it was written to p
   that job in the tests.
 - **Row 7 is not expressible in the declaration, and correctly so.** That is what the
   subsection above already argues — the comparison is a value the *engine* produces, not a
-  rule the declaration encodes — and nothing on this branch claims otherwise. Cycle B is where
-  it can be settled.
+  rule the declaration encodes — and nothing on this branch claims otherwise. **Cycle B did
+  not settle it, and did not build the comparison.** No `blocking` field is declared, read or
+  compared anywhere in `plugins/machines/`; neither shipped fixture declares one, and cycle B's
+  scope excluded row 7. What cycle B's verdict does is report what the fold can see. **Row 7
+  belongs to cycle D**, the cycle that re-expresses `session-relay`, because it needs a
+  `blocking` field that a real declaration makes.
 
   **Guards change what row 7 *could* be, and must not change what it *is*.**
   `claude-plugins#31` cites row 7 as its motivation, and once `blocking` is a typed
@@ -957,7 +961,10 @@ it found a defect nothing predicted — which is the outcome it was written to p
   comparison and reports it, as before. A guard over `blocking` is available to an author who
   wants a transition to *refuse* on the disagreement rather than proceed and report it — which
   `session-relay` explicitly does not want (its rule 4 says use the signal, continue, and
-  report). Cycle B implements the engine's comparison. It does not implement row 7 as a guard.
+  report). **Not built in cycle B.** The comparison is the intended design for cycle D, and cycle B did
+  not implement it, either as an engine value or as a guard. This passage is the reasoning for
+  why row 7 decides whether the framework earned its place; it is not a record of shipped
+  behaviour.
 - The remaining rows land in the schema as written.
 
 **What the schema cannot express, which is cycle B's input.** This is one list, not two:
@@ -1114,7 +1121,8 @@ that delegation works.**
    recorded here: a later cycle reading the old wording would reintroduce it.
 7. **Where prefix validation lives — resolved in cycle A.1.** `check_machine` now calls
    `prefix_problem` itself, so a caller who uses `check_machine` directly — the documented
-   answer to *"is this machine well-formed"*, and what cycle B's engine will do — gets prefix
+   answer to *"is this machine well-formed"*, and what a caller such as the cycle B engine should use. The engine itself takes a machine
+   that the caller has already checked and does not call it — gets prefix
    validation without also running `check_all`'s pairwise collision check. `check_all` still
    calls `prefix_problem` too, to decide which machines are fit to compare for a collision;
    the two calls answer different questions and neither makes the other redundant.
