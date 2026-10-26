@@ -3,6 +3,7 @@ import re
 import unittest
 from pathlib import Path
 
+import machines.engine
 import machines.envelope
 import machines.fold
 from machines.declaration import parse
@@ -158,8 +159,7 @@ class Outbound(unittest.TestCase):
 
 class NoSeq(unittest.TestCase):
     def test_a_clock_is_never_called_seq_anywhere_in_the_engine(self):
-        # Task 4 extends this to machines.engine.
-        for mod in (machines.envelope, machines.fold):
+        for mod in (machines.envelope, machines.fold, machines.engine):
             src = inspect.getsource(mod)
             self.assertIsNone(re.search(r"\bseq\b|\bseq_|_seq\b", src),
                               "%s names seq; #48 decision 1 forbids it"
