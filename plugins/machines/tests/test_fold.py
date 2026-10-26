@@ -256,6 +256,25 @@ def _trace_with_world_reads(raw_reads):
                    for m in base.messages])
 
 
+def _messy_trace_with_world_reads(raw_reads):
+    """A paxos trace that exercises every refusal kind the fold has and one
+    concurrent message, with `raw_reads` on every message. The clean fixture
+    leaves refusals/order/concurrent_with empty or constant, so comparing them
+    there proves nothing."""
+    from machines.envelope import WorldRead
+    reads = [WorldRead(r["verb"], r["result"]) for r in raw_reads]
+    rows = [
+        ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # ok -> prepared
+        ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # duplicate
+        ("promise", "acceptor", "a1", 9, {}),               # out-of-order
+        ("promise", "acceptor", "a1", 2, {"ballot": "x"}),  # field type
+        ("prepare", "proposer", "p1", 2, {"ballot": 6}),    # no transition
+        ("promise", "acceptor", "a1", 1, {}),               # concurrent
+        ("accept-request", "proposer", "p1", 2, {"ballot": 5}),  # ok
+    ]
+    return _trace([_msg(k, b, snd, c, f, reads) for k, b, snd, c, f in rows])
+
+
 def _norm(value):
     """Value objects compared by attribute, never by identity and never by an
     `__eq__` on the verdict types (one that omitted a field would pass while
@@ -297,6 +316,34 @@ class WorldReadsNeverBranch(unittest.TestCase):
             self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
                              name)
         self.assertEqual(a.registers, {"highest_promised": 5})
+
+    def test_the_invariance_covers_refusals_and_order_non_vacuously(self):
+        from machines.engine import verdict
+        a = fold(_paxos(), _messy_trace_with_world_reads(WORLD))
+        # Guard the comparison itself: if a fixture edit empties these, the
+        # invariance below would pass while testing nothing.
+        self.assertEqual(sorted(r.reason for r in a.refusals),
+                         ["duplicate", "field type", "no transition",
+                          "out-of-order"])
+        self.assertIn("concurrent", [s.order for s in a.fired])
+        self.assertTrue(any(s.concurrent_with for s in a.fired))
+        self.assertTrue(a.guards)
+        b = fold(_paxos(), _messy_trace_with_world_reads(OTHER))
+        for name in ("state", "registers", "spent", "clocks", "fired",
+                     "refusals", "guards", "truncated", "steps",
+                     "outbound_clock"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        va = verdict(_paxos(), _messy_trace_with_world_reads(WORLD))
+        vb = verdict(_paxos(), _messy_trace_with_world_reads(OTHER))
+        for name in ("legal", "reason", "state", "holder", "accepting",
+                     "terminal", "may_send", "remaining", "order",
+                     "concurrent_with", "outbound_clock", "truncated",
+                     "refusals", "effects", "guards"):
+            self.assertEqual(_norm(getattr(va, name)),
+                             _norm(getattr(vb, name)), name)
+        self.assertEqual(len(va.refusals), 4)
+        self.assertEqual(va.order, "ok")
 
     def test_a_world_read_is_carried_into_the_verdict_naming_the_message(self):
         from machines.engine import verdict
