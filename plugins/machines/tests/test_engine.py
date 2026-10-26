@@ -338,3 +338,31 @@ class Gate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TruncatedFold(unittest.TestCase):
+    def test_a_truncated_fold_is_reported_and_is_not_legal(self):
+        v = verdict(_loop(None, "channel"), _trace(_spend("r", "x", 50)),
+                    limit=10)
+        self.assertTrue(v.truncated)
+        self.assertFalse(v.legal)
+        self.assertIn("truncated", v.reason)
+
+    def test_a_fold_inside_its_limit_is_legal_and_not_truncated(self):
+        v = verdict(_loop(None, "channel"), _trace(_spend("r", "x", 5)),
+                    limit=10)
+        self.assertEqual((v.truncated, v.legal, v.reason),
+                         (False, True, None))
+
+    def test_the_gate_refuses_on_a_truncated_fold(self):
+        v = gate(_loop(None, "channel"), _trace(_spend("r", "x", 50)),
+                 _out("step", "r", "x"), limit=10)
+        self.assertTrue(v.truncated)
+        self.assertFalse(v.legal)
+        self.assertIn("truncated", v.reason)
+        self.assertEqual(v.effects, ())
+
+    def test_the_gate_still_admits_inside_the_limit(self):
+        v = gate(_loop(None, "channel"), _trace(_spend("r", "x", 5)),
+                 _out("step", "r", "x"), limit=10)
+        self.assertEqual((v.truncated, v.legal), (False, True))

@@ -4,7 +4,7 @@ from pathlib import Path
 from machines.declaration import parse
 from machines.envelope import Envelope, Message, Trace, load_trace
 from machines.fold import MAX_FOLD_STEPS, fold
-from machines.machine import (Field, Guard, Machine, Register, State,
+from machines.machine import (FIELDS, Field, Guard, Machine, Register, State,
                               Transition, check_machine)
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -355,3 +355,51 @@ class WorldReadsNeverBranch(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _loop_machine():
+    return _machine([Transition("a", "step", "r", "a")], states=("a",))
+
+
+def _long_trace(n, kind="step"):
+    return _trace([_msg(kind, "r", "x", i + 1) for i in range(n)])
+
+
+class FoldLimit(unittest.TestCase):
+    def test_a_fold_stops_at_its_limit_and_says_so(self):
+        f = fold(_loop_machine(), _long_trace(50), limit=10)
+        self.assertTrue(f.truncated)
+        self.assertEqual(f.steps, 10)
+        self.assertEqual(len(f.fired), 10)
+        self.assertEqual(f.outbound_clock, 11)  # the partial fold, not the trace
+
+    def test_a_fold_inside_its_limit_is_not_marked_truncated(self):
+        f = fold(_loop_machine(), _long_trace(5), limit=10)
+        self.assertFalse(f.truncated)
+        self.assertEqual(f.steps, 5)
+
+    def test_a_trace_exactly_at_the_limit_is_not_truncated(self):
+        f = fold(_loop_machine(), _long_trace(10), limit=10)
+        self.assertFalse(f.truncated)
+        self.assertEqual(f.steps, 10)
+
+    def test_steps_counts_refused_messages_as_well_as_accepted(self):
+        f = fold(_loop_machine(), _long_trace(7, kind="nope"), limit=10)
+        self.assertEqual((f.steps, len(f.fired), len(f.refusals)), (7, 0, 7))
+
+    def test_refused_messages_count_toward_the_limit(self):
+        f = fold(_loop_machine(), _long_trace(50, kind="nope"), limit=10)
+        self.assertEqual((f.truncated, f.steps), (True, 10))
+
+    def test_the_default_limit_is_the_module_constant(self):
+        f = fold(_loop_machine(), _long_trace(MAX_FOLD_STEPS + 1))
+        self.assertEqual((f.truncated, f.steps), (True, MAX_FOLD_STEPS))
+
+    def test_the_limit_is_an_engine_defence_and_not_a_declared_bound(self):
+        # No declaration field changed. Both shipped declarations still parse
+        # and check clean, and neither mentions a fold limit.
+        for name in ("valid-session-relay.md", "valid-paxos-acceptor.md"):
+            m = parse((FIXTURES / name).read_text())
+            self.assertEqual(check_machine(m), [])
+        self.assertNotIn("fold", set(FIELDS))
+        self.assertNotIn("limit", set(FIELDS))

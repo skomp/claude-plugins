@@ -121,8 +121,16 @@ def _build(m, f, legal, reason, effects=None, extra_guards=()):
         truncated=f.truncated)
 
 
+def _truncated_reason(f):
+    return ("fold truncated after %d steps: the trace is longer than the "
+            "engine's fold limit, so no verdict about the channel is "
+            "given" % (f.steps,))
+
+
 def verdict(m, trace, limit=MAX_FOLD_STEPS):
     f = fold(m, trace, limit)
+    if f.truncated:
+        return _build(m, f, False, _truncated_reason(f))
     if f.refusals:
         return _build(m, f, False, _refusal_reason(f.refusals))
     return _build(m, f, True, None)
@@ -143,6 +151,9 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     choose it. Nothing is performed: `effects` names what the transition
     that would fire requires, and is () on a refusal.
 
+    A truncated fold (the trace outran the engine's limit) is never legal:
+    the reason names the truncation and `truncated` is true.
+
     Refusals, in this order: "terminal state"; "not permitted here" (nothing
     fires on (kind, by) under the guards and these fields, including a field
     carried with the wrong type); "ambiguous" (more than one fires, as in
@@ -151,6 +162,9 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     is a local move and is never counted).
     """
     f = fold(m, trace, limit)
+    if f.truncated:
+        # The state is partial: nothing may be judged against it.
+        return _build(m, f, False, _truncated_reason(f), ())
     if m.states[f.state].terminal:
         return _build(m, f, False, "terminal state", ())
     if (outbound.kind not in m.kinds or outbound.by not in m.roles

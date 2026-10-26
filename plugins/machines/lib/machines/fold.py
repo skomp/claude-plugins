@@ -14,9 +14,37 @@ fires, and the paxos machine never leaves `idle` -- silently, nothing raises.
 
 from machines.machine import OP_ATOMS
 
-# Provisional. Task 7 measures the real figure and owns the enforcement: until
-# then `fold` accepts `limit` and does not act on it, and `Fold.truncated`
-# stays False.
+# An engine-side limit on ONE fold: a defence of the engine against a trace
+# somebody hands it, and NOT a bound on the protocol. The framework does not
+# require a protocol to terminate and an absent `cap` means no bound
+# (SCHEMA.md); nothing here is declared, and no publisher fills anything in.
+# A fold that reaches the limit stops, sets `Fold.truncated`, and the verdict
+# built from it is not legal (engine.py): a verdict about a fold that did not
+# finish is not a verdict about the channel.
+#
+# Measured on the real `fold` on 2026-10-26 (Raspberry Pi, CPython 3, best of
+# 3, `limit` raised out of the way), a one-state machine with a guarded
+# self-loop, one sender, clocks 1..n, every message accepted:
+#     1,001 messages 0.016 s; 10,001 0.173 s; 100,001 1.86 s;
+#     1,000,001 21.5 s                      (16 to 22 us per message)
+# and every message refused ("undeclared kind"): 1,001 0.002 s; 10,001
+# 0.025 s; 100,001 0.29 s; 1,000,001 4.1 s  (2 to 4 us per message).
+# This DISAGREES with the plan's anchor of about 6 us per message from a
+# reference implementation: the shipped fold is about three times slower.
+# The per-message cost is not constant in the number of DISTINCT senders,
+# though: `max(clocks.values())` and the concurrency scan walk every sender
+# seen, so a trace in which every message has a new sender is quadratic:
+# 1,001 messages 0.095 s; 3,001 0.74 s; 10,001 8.7 s (867 us per message).
+# To repeat it: build a `Trace` of n `Message`s with
+# `Envelope(i + 1, sender)` and time `fold(m, trace, limit=10**9)`.
+#
+# Which bound governs: at 10,000 steps the realistic cost (a few senders) is
+# 0.2 s at most, and the hostile all-distinct-senders trace is 8.7 s, the
+# worst the limit permits. A real channel (one issue thread, a handful of
+# senders) is hundreds of messages, so the plausible channel length is far
+# below the limit and the limit governs only hostile or runaway input; the
+# time cost, not channel length, is what fixes the number. 100,000 would
+# allow the quadratic case to run for minutes.
 MAX_FOLD_STEPS = 10000
 
 _PYTHON_TYPE = {"int": int, "bool": bool}
@@ -153,9 +181,15 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
     spent = {role: 0 for role in m.roles}
     clocks = {}
     fired, refusals, guards, world_reads = [], [], [], []
+    # `steps` counts messages CONSUMED, refused ones included: a refused
+    # message still cost a fold step, and the limit is a cost limit.
     steps = 0
+    truncated = False
 
     for index, msg in enumerate(trace.messages):
+        if steps >= limit:
+            truncated = True
+            break
         steps += 1
         for wr in msg.world_reads:
             world_reads.append(WorldReadRecord(index, wr.verb, wr.result))
@@ -245,4 +279,4 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
 
     outbound = max(clocks.values()) + 1 if clocks else 1
     return Fold(state, registers, spent, clocks, fired, refusals, guards,
-                world_reads, False, steps, outbound)
+                world_reads, truncated, steps, outbound)
