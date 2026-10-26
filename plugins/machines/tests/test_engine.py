@@ -5,7 +5,7 @@ from pathlib import Path
 
 import machines.engine
 from machines.declaration import parse
-from machines.engine import Offer, Remaining, Verdict, verdict
+from machines.engine import Offer, Remaining, Verdict, gate, verdict
 from machines.envelope import Envelope, Message, Trace, load_trace
 from machines.machine import (Field, Guard, Machine, Register, State,
                               Transition)
@@ -185,6 +185,155 @@ class Order(unittest.TestCase):
                                _msg("step", "s", "y", 1)]))
         self.assertTrue(v.legal)
         self.assertEqual((v.order, v.concurrent_with), ("concurrent", ("x",)))
+
+
+def _out(kind, by, sender, fields=None, clock=None):
+    return Message(kind, by, Envelope(clock, sender), fields)
+
+
+def _loop(cap, scope, signal=True, roles=("r",)):
+    """One state, a self-loop `step` for each role in `roles`."""
+    return _machine(cap, scope,
+                    states={"a": State("a", holder="r", accepting=True)},
+                    transitions=[Transition("a", "step", r, "a", signal=signal,
+                                            effects=["escalate"])
+                                 for r in roles])
+
+
+def _spend(by, sender, n, start=1):
+    return [_msg("step", by, sender, start + i) for i in range(n)]
+
+
+class Gate(unittest.TestCase):
+    def test_the_gate_refuses_a_kind_the_current_state_does_not_permit(self):
+        trace = _trace(load_trace(
+            FIXTURES / "trace-session-relay.json").messages[:1])
+        v = gate(SESSION_RELAY, trace, _out("answer", "initiator", "repo-a"))
+        self.assertFalse(v.legal)  # state is awaiting-triage
+        self.assertEqual(v.reason, "not permitted here")
+        self.assertEqual(v.effects, ())
+
+    def test_the_gate_admits_a_kind_the_current_state_permits(self):
+        trace = _trace(load_trace(
+            FIXTURES / "trace-session-relay.json").messages[:1])
+        v = gate(SESSION_RELAY, trace, _out("question", "responder", "repo-b"))
+        self.assertTrue(v.legal)
+        self.assertIsNone(v.reason)
+        self.assertEqual(v.outbound_clock, 2)
+
+    def test_the_gate_refuses_an_outbound_message_past_the_cap(self):
+        m = _loop(10, "role")
+        nine = gate(m, _trace(_spend("r", "x", 9)), _out("step", "r", "x"))
+        self.assertTrue(nine.legal)  # the tenth is the last one allowed
+        v = gate(m, _trace(_spend("r", "x", 10)), _out("step", "r", "x"))
+        self.assertFalse(v.legal)  # item 6's "11 of 10", refused
+        self.assertEqual(v.reason, "cap exhausted")
+        self.assertEqual(v.remaining.headroom["r"], 0)
+        self.assertEqual(v.effects, ())
+
+    def test_an_overspent_role_is_exhausted_not_admitted(self):
+        m = _loop(1, "role")
+        v = gate(m, _trace(_spend("r", "x", 2)), _out("step", "r", "x"))
+        self.assertEqual(v.remaining.headroom["r"], -1)
+        self.assertEqual((v.legal, v.reason), (False, "cap exhausted"))
+
+    def test_a_role_at_its_cap_does_not_block_the_other_role(self):
+        m = _loop(2, "role", roles=("r", "s"))
+        trace = _trace(_spend("r", "x", 2))
+        self.assertEqual(gate(m, trace, _out("step", "r", "x")).reason,
+                         "cap exhausted")
+        self.assertTrue(gate(m, trace, _out("step", "s", "y")).legal)
+
+    def test_under_per_channel_scope_one_budget_is_shared(self):
+        m = _loop(2, "channel", roles=("r", "s"))
+        trace = _trace(_spend("r", "x", 2))
+        self.assertEqual(gate(m, trace, _out("step", "s", "y")).reason,
+                         "cap exhausted")
+
+    def test_a_machine_with_no_cap_is_never_exhausted(self):
+        m = _loop(None, "channel")
+        v = gate(m, _trace(_spend("r", "x", 50)), _out("step", "r", "x"))
+        self.assertTrue(v.legal)
+        self.assertIsNone(v.remaining)
+
+    def test_a_local_move_does_not_count_against_the_cap(self):
+        m = _loop(1, "role", signal=False)
+        v = gate(m, _trace(_spend("r", "x", 3)), _out("step", "r", "x"))
+        self.assertEqual(v.remaining.spent["r"], 0)
+        self.assertTrue(v.legal)
+        # headroom gone but the transition is a local move: still admitted
+        m2 = _machine(1, "role", states={
+            "a": State("a", holder="r", accepting=True)}, transitions=[
+            Transition("a", "step", "r", "a", signal=True),
+            Transition("a", "note", "r", "a", signal=False)])
+        m2.kinds.append("note")
+        trace = _trace(_spend("r", "x", 1))
+        self.assertEqual(gate(m2, trace, _out("step", "r", "x")).reason,
+                         "cap exhausted")
+        self.assertTrue(gate(m2, trace, _out("note", "r", "x")).legal)
+
+    def test_the_gate_refuses_everything_from_a_terminal_state(self):
+        trace = _trace(_spend("r", "x", 1))
+        m = _machine(None)
+        for kind, by in (("step", "r"), ("step", "s"), ("nope", "r")):
+            v = gate(m, trace, _out(kind, by, "x"))
+            self.assertEqual((v.legal, v.reason, v.terminal),
+                             (False, "terminal state", True))
+
+    def test_the_gate_refuses_more_than_one_firing_transition(self):
+        m = _machine(None, states={
+            "a": State("a", holder="r", accepting=True),
+            "b": State("b", accepting=True),
+            "c": State("c", accepting=True)}, transitions=[
+            Transition("a", "step", "r", "b"),
+            Transition("a", "step", "r", "c")])
+        v = gate(m, _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.legal, v.reason), (False, "ambiguous"))
+        self.assertEqual(v.effects, ())
+
+    def test_a_refusal_in_the_history_does_not_refuse_an_outbound_message(
+            self):
+        trace = _trace([_msg("answer", "initiator", "repo-a", 1)])
+        self.assertFalse(verdict(SESSION_RELAY, trace).legal)
+        v = gate(SESSION_RELAY, trace, _out("triage", "initiator", "repo-a"))
+        self.assertTrue(v.legal)
+        self.assertEqual([r.reason for r in v.refusals], ["no transition"])
+
+    def test_the_gate_overwrites_a_caller_supplied_clock(self):
+        v = gate(SESSION_RELAY, _trace([]),
+                 _out("triage", "initiator", "repo-a", clock=99))
+        self.assertEqual(v.outbound_clock, 1)
+        trace = _trace(_spend("r", "x", 3))
+        v = gate(_loop(None, "channel"), trace,
+                 _out("step", "r", "x", clock=1))
+        self.assertEqual(v.outbound_clock, 4)
+
+    def test_the_gate_evaluates_a_guard_against_the_outbound_messages_own_fields(
+            self):
+        # promised at ballot 5: ballot 5 honours the promise, any other ballot
+        # is the stale branch, and a message with no ballot fires neither
+        trace = _trace([_msg("prepare", "proposer", "p1", 1, {"ballot": 5}),
+                        _msg("promise", "acceptor", "a1", 2)])
+        for fields, fired in (({"ballot": 5}, "eq"), ({"ballot": 6}, "ne")):
+            v = gate(PAXOS, trace,
+                     _out("accept-request", "proposer", "p1", fields))
+            self.assertTrue(v.legal)
+            self.assertEqual([(g.op, g.field_value, g.register_value)
+                              for g in v.guards if g.fired and g.index == 2],
+                             [(fired, fields["ballot"], 5)])
+        v = gate(PAXOS, trace, _out("accept-request", "proposer", "p1"))
+        self.assertEqual((v.legal, v.reason), (False, "not permitted here"))
+
+    def test_the_gate_refuses_a_guarded_field_of_the_wrong_type(self):
+        v = gate(PAXOS, _trace([]),
+                 _out("prepare", "proposer", "p1", {"ballot": True}))
+        self.assertEqual((v.legal, v.reason), (False, "not permitted here"))
+
+    def test_the_gate_performs_no_effect_and_only_names_the_required_set(
+            self):
+        v = gate(SESSION_RELAY, _trace([]),
+                 _out("triage", "initiator", "repo-a"))
+        self.assertEqual(v.effects, ("label.add:session-relay:open",))
 
 
 if __name__ == "__main__":

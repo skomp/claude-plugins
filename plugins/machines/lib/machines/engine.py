@@ -10,7 +10,7 @@ outbound clock is `Fold.outbound_clock`, read, never recomputed.
 this") can reuse it rather than inline a second copy.
 """
 
-from machines.fold import MAX_FOLD_STEPS, fold
+from machines.fold import MAX_FOLD_STEPS, _read_guard, _wrong_type, fold
 
 
 class Offer(object):
@@ -88,10 +88,20 @@ def _refusal_reason(refusals):
     return text
 
 
-def _build(m, f, legal, reason):
-    """Assemble a Verdict from a Fold. Shared by `verdict` and (Task 5) `gate`."""
+def _build(m, f, legal, reason, effects=None, extra_guards=()):
+    """Assemble a Verdict from a Fold. Shared by `verdict` and `gate`.
+    `effects` and `extra_guards` are for `gate`: the effects of the transition
+    it would fire (or () on a refusal), and the guards it read outbound. The
+    order of an outbound message is "ok" with no peers: its clock is stamped
+    above every clock seen."""
     st = m.states[f.state]
     last = f.fired[-1] if f.fired else None
+    if effects is None:
+        effects = tuple(last.transition.effects) if last else ()
+        order = last.order if last else "ok"
+        concurrent = last.concurrent_with if last else ()
+    else:
+        order, concurrent = "ok", ()
     return Verdict(
         legal=legal,
         reason=reason,
@@ -101,10 +111,10 @@ def _build(m, f, legal, reason):
         terminal=st.terminal,
         may_send=_may_send(m, f.state),
         remaining=_remaining(m, f.spent),
-        effects=tuple(last.transition.effects) if last else (),
-        order=last.order if last else "ok",
-        concurrent_with=last.concurrent_with if last else (),
-        guards=f.guards,
+        effects=effects,
+        order=order,
+        concurrent_with=concurrent,
+        guards=tuple(f.guards) + tuple(extra_guards),
         world_reads=f.world_reads,
         outbound_clock=f.outbound_clock,
         refusals=f.refusals,
@@ -116,3 +126,55 @@ def verdict(m, trace, limit=MAX_FOLD_STEPS):
     if f.refusals:
         return _build(m, f, False, _refusal_reason(f.refusals))
     return _build(m, f, True, None)
+
+
+def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
+    """May `outbound` be sent now? Answered before the message exists.
+
+    `legal` is judged against the folded state alone. It does NOT inherit
+    `verdict`'s meaning: a refusal in the trace's history is reported in
+    `refusals` and never by itself refuses an outbound message, or one old
+    refused message would silence the channel for ever.
+
+    The gate reads `outbound.by` and `outbound.fields`. `outbound.sender` is
+    the caller's; `outbound.kind` is the kind to send. Any clock the caller
+    put in `outbound.envelope` is DISCARDED and never validated: the engine
+    stamps `outbound_clock` (the fold's, max seen + 1) and a sender cannot
+    choose it. Nothing is performed: `effects` names what the transition
+    that would fire requires, and is () on a refusal.
+
+    Refusals, in this order: "terminal state"; "not permitted here" (nothing
+    fires on (kind, by) under the guards and these fields, including a field
+    carried with the wrong type); "ambiguous" (more than one fires, as in
+    the fold: none is picked); "cap exhausted" (headroom <= 0 and the
+    transition that would fire has signal: true; a signal: false transition
+    is a local move and is never counted).
+    """
+    f = fold(m, trace, limit)
+    if m.states[f.state].terminal:
+        return _build(m, f, False, "terminal state", ())
+    if (outbound.kind not in m.kinds or outbound.by not in m.roles
+            or _wrong_type(m, outbound.fields) is not None):
+        return _build(m, f, False, "not permitted here", ())
+    index = len(trace.messages)
+    firing, readings = [], []
+    for t in m.transitions:
+        if t.frm != f.state or t.on != outbound.kind or t.by != outbound.by:
+            continue
+        if t.guard is None:
+            firing.append(t)
+            continue
+        reading = _read_guard(m, index, t, outbound, f.registers)
+        readings.append(reading)
+        if reading.fired:
+            firing.append(t)
+    if not firing:
+        return _build(m, f, False, "not permitted here", (), readings)
+    if len(firing) > 1:
+        return _build(m, f, False, "ambiguous", (), readings)
+    t = firing[0]
+    remaining = _remaining(m, f.spent)
+    if (t.signal and remaining is not None
+            and remaining.headroom[outbound.by] <= 0):
+        return _build(m, f, False, "cap exhausted", (), readings)
+    return _build(m, f, True, None, tuple(t.effects), readings)
