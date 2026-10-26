@@ -242,5 +242,69 @@ class Bookkeeping(unittest.TestCase):
                          [(0, "gh", {"x": [1]})])
 
 
+WORLD = [{"verb": "db.query", "result": {"rows": 3, "status": "green"}}]
+OTHER = [{"verb": "db.query",
+          "result": {"rows": 99999, "status": "on fire", "x": [1, 2]}}]
+
+
+def _trace_with_world_reads(raw_reads):
+    """The paxos fixture trace with `raw_reads` attached to EVERY message."""
+    from machines.envelope import WorldRead
+    base = load_trace(FIXTURES / "trace-paxos-acceptor.json")
+    reads = [WorldRead(r["verb"], r["result"]) for r in raw_reads]
+    return _trace([Message(m.kind, m.by, m.envelope, m.fields, reads)
+                   for m in base.messages])
+
+
+def _norm(value):
+    """Value objects compared by attribute, never by identity and never by an
+    `__eq__` on the verdict types (one that omitted a field would pass while
+    testing less)."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_norm(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _norm(v)) for k, v in value.items()))
+    if hasattr(value, "__dict__"):
+        return (type(value).__name__,
+                tuple(sorted((k, _norm(v)) for k, v in vars(value).items())))
+    return value
+
+
+class WorldReadsNeverBranch(unittest.TestCase):
+    """SPEC sections 6 and 14: the engine folds channel reads and never
+    branches on a world read. The trace is the only record of a conversation,
+    so a branch on a world result would let two folds of one trace disagree."""
+
+    def test_the_verdict_is_identical_however_a_world_read_turned_out(self):
+        from machines.engine import verdict
+        a = verdict(_paxos(), _trace_with_world_reads(WORLD))
+        b = verdict(_paxos(), _trace_with_world_reads(OTHER))
+        for name in ("legal", "reason", "state", "holder", "accepting",
+                     "terminal", "may_send", "remaining", "order",
+                     "concurrent_with", "outbound_clock", "truncated",
+                     "refusals", "effects", "guards"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        self.assertTrue(a.guards)   # the comparison is not vacuous
+        self.assertNotEqual(_norm(a.world_reads), _norm(b.world_reads))
+
+    def test_the_fold_is_identical_however_a_world_read_turned_out(self):
+        a = fold(_paxos(), _trace_with_world_reads(WORLD))
+        b = fold(_paxos(), _trace_with_world_reads(OTHER))
+        for name in ("state", "registers", "spent", "clocks", "fired",
+                     "refusals", "guards", "truncated", "steps",
+                     "outbound_clock"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        self.assertEqual(a.registers, {"highest_promised": 5})
+
+    def test_a_world_read_is_carried_into_the_verdict_naming_the_message(self):
+        from machines.engine import verdict
+        v = verdict(_paxos(), _trace_with_world_reads(WORLD))
+        self.assertEqual([(w.index, w.verb) for w in v.world_reads],
+                         [(i, "db.query") for i in range(len(v.world_reads))])
+        self.assertEqual(len(v.world_reads), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
