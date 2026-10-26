@@ -48,6 +48,21 @@ class FixtureFolds(unittest.TestCase):
         self.assertEqual(f.clocks, {"repo-a": 3, "repo-b": 4})
         self.assertEqual(f.outbound_clock, 5)
         self.assertEqual([s.order for s in f.fired], ["ok"] * 4)
+        self.assertEqual(
+            [(s.index, s.frm, s.to, s.transition.frm, s.transition.on,
+              s.transition.by, s.transition.to) for s in f.fired],
+            [(0, "unopened", "awaiting-triage",
+              "unopened", "triage", "initiator", "awaiting-triage"),
+             (1, "awaiting-triage", "awaiting-answer",
+              "awaiting-triage", "question", "responder", "awaiting-answer"),
+             (2, "awaiting-answer", "awaiting-triage",
+              "awaiting-answer", "answer", "initiator", "awaiting-triage"),
+             (3, "awaiting-triage", "concluded",
+              "awaiting-triage", "conclusion", "responder", "concluded")])
+        self.assertEqual(f.fired[0].transition.effects,
+                         ["label.add:session-relay:open"])
+        self.assertEqual(f.fired[3].transition.effects,
+                         ["label.remove:session-relay:open"])
 
     def test_the_paxos_fixture_folds_to_decided_and_remembers_the_ballot(self):
         m = _paxos()
