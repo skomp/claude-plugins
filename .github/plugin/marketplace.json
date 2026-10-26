@@ -62,6 +62,17 @@
         "name": "skomp",
         "url": "https://github.com/skomp"
       }
+    },
+    {
+      "name": "security-reviewer",
+      "source": "./plugins/security-reviewer",
+      "version": "0.1.0",
+      "category": "development",
+      "description": "An orchestrator agent that runs a multi-agent security review of a codebase and reports the findings.",
+      "author": {
+        "name": "skomp",
+        "url": "https://github.com/skomp"
+      }
     }
   ]
 }

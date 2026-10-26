@@ -9,7 +9,7 @@ Every issue also carries two more labels:
 
 - **One `plugin:` label** naming the plugin it belongs to: `plugin:evidence-discipline`,
   `plugin:agent-operations`, `plugin:ticket-craft`, `plugin:session-relay`,
-  `plugin:tone-roulette`, `plugin:machines`. Use `plugin:marketplace` for packaging and
+  `plugin:tone-roulette`, `plugin:machines`, `plugin:security-reviewer`. Use `plugin:marketplace` for packaging and
   marketplace work that belongs to no single plugin.
 - **One `severity:` label:**
   - `severity:high`: wrong behaviour or lost data in normal use.
@@ -19,7 +19,7 @@ Every issue also carries two more labels:
 
 ## What this repository is
 
-This repository holds six Claude Code plugins. The skills come from real failures
+This repository holds seven Claude Code plugins. The skills come from real failures
 in other projects. The project names are redacted. The dates, commands, error strings
 and measurements are verbatim, and you must keep them that way.
 

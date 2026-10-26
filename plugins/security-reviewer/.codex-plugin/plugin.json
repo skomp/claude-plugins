@@ -1,0 +1,19 @@
+{
+  "name": "security-reviewer",
+  "version": "0.1.0",
+  "description": "An orchestrator agent that runs a multi-agent security review of a codebase and reports the findings.",
+  "author": {
+    "name": "skomp",
+    "url": "https://github.com/skomp"
+  },
+  "homepage": "https://github.com/skomp/claude-plugins",
+  "repository": "https://github.com/skomp/claude-plugins",
+  "license": "MIT",
+  "keywords": [
+    "security",
+    "review",
+    "audit",
+    "vulnerability",
+    "agent"
+  ]
+}

@@ -53,6 +53,14 @@
       "category": "development",
       "description": "Declare a communication protocol as a state machine next to the prose that explains it, and check it for well-formedness and prefix collisions against every other declared machine before you trust it. Cycle A: the schema and the checker only, no engine, no installer, no dispatcher.",
       "author": { "name": "skomp", "url": "https://github.com/skomp" }
+    },
+    {
+      "name": "security-reviewer",
+      "source": "./plugins/security-reviewer",
+      "version": "0.1.0",
+      "category": "development",
+      "description": "An orchestrator agent that runs a multi-agent security review of a codebase and reports the findings.",
+      "author": { "name": "skomp", "url": "https://github.com/skomp" }
     }
   ]
 }
