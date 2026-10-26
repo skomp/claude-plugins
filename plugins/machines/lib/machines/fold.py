@@ -21,6 +21,11 @@ MAX_FOLD_STEPS = 10000
 
 _PYTHON_TYPE = {"int": int, "bool": bool}
 
+# SPEC section 6's four order values, exactly. A clock above max(seen) + 1 is
+# reported as "out-of-order" with the gap named in the refusal's detail: the
+# author kept four values rather than add a fifth.
+ORDERS = ("ok", "duplicate", "out-of-order", "concurrent")
+
 
 class WorldReadRecord(object):
     def __init__(self, index, verb, result):
@@ -50,8 +55,11 @@ class GuardReading(object):
 
 
 class Step(object):
-    def __init__(self, index, transition, frm, to, order):
+    def __init__(self, index, transition, frm, to, order, concurrent_with=()):
         self.index = index
+        # The other senders whose accepted high-water clock is >= this
+        # message's clock; non-empty exactly when order == "concurrent".
+        self.concurrent_with = tuple(concurrent_with)
         self.transition = transition
         self.frm = frm
         self.to = to
@@ -166,6 +174,34 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
             refuse("field type", wrong)
             continue
 
+        # The clock verdict. It comes before the transition lookup, so a
+        # repeated message is a "duplicate" and not "no transition". Clocks are
+        # keyed by SENDER; the cap (spent) is keyed by ROLE. Never one key.
+        sender = msg.envelope.sender
+        clock = msg.envelope.clock
+        order = "ok"
+        concurrent_with = ()
+        if sender in clocks and clock <= clocks[sender]:
+            if clock == clocks[sender]:
+                refuse("duplicate", "clock %d from %r repeats its high-water "
+                       "mark" % (clock, sender))
+            else:
+                refuse("out-of-order", "clock %d from %r is below its "
+                       "high-water mark %d" % (clock, sender, clocks[sender]))
+            continue
+        # The gap rule needs something seen to measure against: the first
+        # accepted message sets the baseline, whatever its clock (test_fold
+        # pins first clocks of 7 and 9).
+        highest = max(clocks.values()) if clocks else None
+        if highest is not None and clock > highest + 1:
+            refuse("out-of-order", "clock %d follows nothing seen; highest "
+                   "seen is %d" % (clock, highest))
+            continue
+        concurrent_with = tuple(sorted(
+            s for s, c in clocks.items() if s != sender and c >= clock))
+        if concurrent_with:
+            order = "concurrent"
+
         # Candidates in declaration order, for a stable `guards` sequence;
         # every one is evaluated, because "more than one fires" is a refusal.
         firing = []
@@ -203,9 +239,8 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
                     registers[name] = value
         if t.signal and t.by in spent:
             spent[t.by] += 1
-        sender = msg.envelope.sender
-        clocks[sender] = max(clocks.get(sender, 0), msg.envelope.clock)
-        fired.append(Step(index, t, state, t.to, "ok"))
+        clocks[sender] = max(clocks.get(sender, 0), clock)
+        fired.append(Step(index, t, state, t.to, order, concurrent_with))
         state = t.to
 
     outbound = max(clocks.values()) + 1 if clocks else 1
