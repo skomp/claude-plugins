@@ -3,7 +3,9 @@ from pathlib import Path
 
 from machines.declaration import parse
 from machines.envelope import Envelope, Message, Trace, load_trace
-from machines.fold import MAX_FOLD_STEPS, fold
+from types import SimpleNamespace
+
+from machines.fold import MAX_FOLD_STEPS, candidates, fold
 from machines.machine import (FIELDS, Field, Guard, Machine, Register, State,
                               Transition, check_machine)
 
@@ -180,7 +182,9 @@ class OtherRefusals(unittest.TestCase):
                        effects=["label.add:one"]),
             Transition("a", "step", "r", "b", signal=True,
                        effects=["label.add:two"])])
-        self.assertEqual(check_machine(m), [])  # the checker passes it
+        # The checker now reports this shape (claude-plugins#51); a
+        # hand-built Machine still reaches the fold, which is the backstop.
+        self.assertTrue(any("nondeterministic" in p for p in check_machine(m)))
         f = fold(m, _trace([_msg("step", "r", "s", 1)]))
         self.assertEqual([r.reason for r in f.refusals], ["ambiguous"])
         self.assertEqual(f.state, "a")
@@ -422,3 +426,55 @@ class FoldLimit(unittest.TestCase):
             self.assertEqual(check_machine(m), [])
         self.assertNotIn("fold", set(FIELDS))
         self.assertNotIn("limit", set(FIELDS))
+
+
+class CandidatesRule(unittest.TestCase):
+    """`candidates` is the one rule both the fold and the gate call. It is
+    given anything with `kind`, `by` and `fields` -- no envelope -- so an
+    outbound message, which has none yet, is not made to pretend."""
+
+    def _ask(self, m, state, kind, by, fields, registers):
+        out = SimpleNamespace(kind=kind, by=by, fields=fields)
+        return candidates(m, state, out, registers, 7)
+
+    def _two(self):
+        return _machine(
+            [Transition("a", "step", "r", "b", guard=Guard("n", "ge", "reg")),
+             Transition("a", "step", "r", "a", guard=Guard("n", "le", "reg")),
+             Transition("a", "other", "r", "b"),
+             Transition("b", "step", "r", "b"),
+             Transition("a", "step", "q", "b")],
+            registers={"reg": Register("reg", "max", "n", ["step"], 5)},
+            fields={"n": Field("n", "int")}, kinds=("step", "other"),
+            roles=("r", "q"), states=("a", "b"))
+
+    def test_only_transitions_on_this_state_kind_and_role_are_candidates(self):
+        m = self._two()
+        c = self._ask(m, "a", "step", "r", {"n": 9}, {"reg": 5})
+        self.assertEqual([(t.frm, t.on, t.by, t.to) for t in c.firing],
+                         [("a", "step", "r", "b")])
+        self.assertEqual([r.transition_id for r in c.readings],
+                         [("a", "step", "r", "b"), ("a", "step", "r", "a")])
+        self.assertEqual({r.index for r in c.readings}, {7})
+
+    def test_every_guard_is_read_even_after_one_fired(self):
+        c = self._ask(self._two(), "a", "step", "r", {"n": 9}, {"reg": 5})
+        self.assertEqual([r.fired for r in c.readings], [True, False])
+        self.assertFalse(c.ambiguous)
+
+    def test_two_firing_is_ambiguous_and_nothing_is_picked(self):
+        c = self._ask(self._two(), "a", "step", "r", {"n": 5}, {"reg": 5})
+        self.assertEqual([r.fired for r in c.readings], [True, True])
+        self.assertEqual(len(c.firing), 2)
+        self.assertTrue(c.ambiguous)
+
+    def test_an_unguarded_transition_fires_and_reads_nothing(self):
+        c = self._ask(self._two(), "a", "other", "r", {}, {"reg": 5})
+        self.assertEqual(len(c.firing), 1)
+        self.assertEqual(c.readings, ())
+        self.assertFalse(c.ambiguous)
+
+    def test_nothing_firing_is_not_ambiguous(self):
+        c = self._ask(self._two(), "a", "step", "r", {}, {"reg": 5})
+        self.assertEqual(c.firing, ())
+        self.assertFalse(c.ambiguous)
