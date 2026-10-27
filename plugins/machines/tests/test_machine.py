@@ -356,8 +356,8 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
 
     def test_same_target_different_effects_is_reported(self):
         m = parse(DECLARED_SHARED % (
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:two"] }'))
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: two } }] }'))
         problems = [p for p in check_machine(m) if "nondeterministic" in p]
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("'a'", problems[0])
@@ -391,8 +391,8 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
 
     def test_a_word_for_word_repeat_is_reported_once_as_declared_twice(self):
         m = parse(DECLARED_SHARED % (
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }'))
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }'))
         problems = check_machine(m)
         self.assertEqual([p for p in problems if "declared twice" in p],
                          ["transition from 'a' on 'x' by 'r' to 'b' is "

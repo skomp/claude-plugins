@@ -611,6 +611,9 @@ class TestStructuredEffects(unittest.TestCase):
     def test_an_argument_name_that_is_not_a_string_is_refused(self):
         self.assert_rejected("args", "[{ verb: v, args: { 5: x } }]")
 
+    def test_args_that_is_null_is_refused_not_read_as_empty(self):
+        self.assert_rejected("args", "[{ verb: escalate, args: null }]")
+
     def test_omitted_args_parse_to_an_empty_mapping(self):
         [e] = self.effects_of("[{ verb: escalate }]")
         self.assertEqual((e.verb, e.args), ("escalate", {}))
