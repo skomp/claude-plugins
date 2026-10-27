@@ -30,10 +30,22 @@ One thing this module has to do that `patterns_collide` itself does not:
   module exists to find.
 
 Because a name alone no longer identifies a machine, every place this
-module names one -- a `problems` key, each side of a `collisions` pair --
-uses `label`: `publisher/name` when a publisher is declared, the bare
-`name` when it is not. Otherwise a collision between two publishers'
-`session-relay` would read as `session-relay` and `session-relay`.
+module names one uses one of two labels, and which one depends on what
+the entry is about:
+
+- A `collisions` pair is about two *protocols*: one of them claims a
+  prefix that the other one claims too, and that is true of every version
+  either of them has. So a pair uses `label` -- `publisher/name` when a
+  publisher is declared, the bare `name` when it is not -- and the list is
+  deduplicated, because two versions of one protocol colliding with a
+  third machine is one finding, not two.
+
+- A `problems` key is about one *version*: an installer keeps old versions
+  on purpose, so two versions of one machine are a normal thing to check,
+  and each one's problems are its own. So a key uses `versioned_label`,
+  which adds `@version`. Keyed on `label` alone, the second version's
+  entry replaced the first one's and the report showed only the problems
+  of whichever version came last (claude-plugins#43).
 """
 
 import itertools
@@ -43,12 +55,23 @@ from .product import patterns_collide
 
 
 def label(m):
-    """The name a report uses for machine `m`: `publisher/name`, or the
-    bare `name` when no publisher is declared. See the module docstring.
+    """The name a report uses for the *protocol* machine `m` belongs to:
+    `publisher/name`, or the bare `name` when no publisher is declared.
+    Every version of one protocol shares this label. See the module
+    docstring.
     """
     if m.publisher is None:
         return m.name
     return "%s/%s" % (m.publisher, m.name)
+
+
+def versioned_label(m):
+    """The name a report uses for machine `m` itself: `label` plus
+    `@version`. Two versions of one protocol are two machines, and a
+    problem belongs to the one that has it, so this is what a `problems`
+    key uses. See the module docstring.
+    """
+    return "%s@%s" % (label(m), m.version)
 
 
 class Report(object):
@@ -59,12 +82,16 @@ class Report(object):
       must not read the same as a report that checked ten machines and
       found them all clean -- see the module-level docstring and
       `check_all` below.
-    - `problems`: machine label (see `label`) -> its own list of problems, straight from
-      `check_machine` (which includes a prefix that would not compile --
-      see `machine.py`'s `prefix_problem`). A machine with no problems of
-      its own is absent from this dict, not present with an empty list.
-    - `collisions`: pairs of machine labels that can claim the same
-      message, each pair as a sorted 2-tuple, each pair listed once, the
+    - `problems`: versioned machine label (see `versioned_label`) -> that
+      version's own list of problems, straight from `check_machine` (which
+      includes a prefix that would not compile -- see `machine.py`'s
+      `prefix_problem`). A machine with no problems of its own is absent
+      from this dict, not present with an empty list. The key carries the
+      version because two versions of one machine are two machines with
+      problems of their own -- see the module docstring.
+    - `collisions`: pairs of protocol labels (see `label`) that can claim
+      the same message, each pair as a sorted 2-tuple, each pair listed
+      once however many versions of either protocol were examined, the
       whole list sorted -- so the output is stable across runs.
     """
 
@@ -114,7 +141,10 @@ def check_all(machines):
         if prefix_problem(m.prefix) is None:
             collidable.append(m)
         if own_problems:
-            problems[label(m)] = own_problems
+            # Keyed on the version too: two versions of one machine are a
+            # normal thing to be handed, and each one's problems are its
+            # own. On a label alone the second one overwrote the first.
+            problems[versioned_label(m)] = own_problems
 
     collisions = []
     for a, b in itertools.combinations(collidable, 2):
@@ -127,6 +157,10 @@ def check_all(machines):
         if patterns_collide(a.prefix, b.prefix):
             collisions.append(tuple(sorted((label(a), label(b)))))
 
-    collisions.sort()
+    # Deduplicated, because a pair names two protocols rather than two
+    # machines: if two versions of `alpha` each collide with `beta`, the
+    # finding "alpha and beta claim an overlapping prefix" is one finding,
+    # and the loop above produced it once per version.
+    collisions = sorted(set(collisions))
 
     return Report(len(machines), problems, collisions)

@@ -52,6 +52,13 @@ to search for a `SKILL.md`. It parses every machine it finds, checks each one fo
 well-formedness, and checks every pair of distinctly-named machines for a prefix collision
 — two protocols that could both claim the same message.
 
+**A problem names the version it is in, a collision does not.** A problem line reads
+`acme/session-relay@v1: …`, because a defect belongs to one version and an installer keeps
+old versions on purpose. A collision line reads `acme/session-relay and globex/session-relay`
+with no version on either side, because two protocols that claim one prefix do so in every
+version they have — and that pair is reported once however many versions of either one the
+run examined.
+
 What "well-formed" covers: every referenced state, role and kind is actually declared; at
 least one state is accepting; every state can reach somewhere a run may legitimately stop
 (an accepting state or a terminal one); a terminal state has no way out of it; nothing is
