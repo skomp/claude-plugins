@@ -205,7 +205,11 @@ last message, and a message claiming to follow something the receiver has not se
   it:** a backport that joins a thread in the middle must expect its first message to set the
   baseline and not to be refused for a gap.
 - **`total_order` is a required boolean on the trace fixture** in cycle B. The transport's
-  declaration of it (§8) waits for cycle C.
+  declaration of it (§8) waits for cycle C. **The engine does not read it**, and it does not
+  read `channel_order` on an envelope either: both are validated and carried, and the engine
+  derives order from the clock alone. The paragraphs of this section and of §8 that describe
+  the engine's behaviour as differing with the channel's total order describe the intended
+  design, not cycle B.
 
 **This does not replace `session-relay`'s `seq=`, and cycle D must not let it try.** See
 §10, which has the measurement and the argument; the two are different quantities with
@@ -958,13 +962,19 @@ it found a defect nothing predicted — which is the outcome it was written to p
   section already has.** A guard is a rule an author remembers to write; the engine's
   comparison is a value it cannot avoid producing, and *"a computation that always runs cannot
   be skipped"* is precisely why `#17`'s rule failed the first time. So: the engine produces the
-  comparison and reports it, as before. A guard over `blocking` is available to an author who
-  wants a transition to *refuse* on the disagreement rather than proceed and report it — which
+  comparison and reports it. A guard over `blocking` is available to an author who wants a
+  transition to *refuse* on the disagreement rather than proceed and report it, which
   `session-relay` explicitly does not want (its rule 4 says use the signal, continue, and
-  report). **Not built in cycle B.** The comparison is the intended design for cycle D, and cycle B did
-  not implement it, either as an engine value or as a guard. This passage is the reasoning for
-  why row 7 decides whether the framework earned its place; it is not a record of shipped
-  behaviour.
+  report).
+
+  This passage is the intended design, not a record of shipped behaviour. **Cycle B did not
+  build the comparison**, either as an engine value or as a guard, and the engine produces and
+  reports nothing about row 7 today. The comparison belongs to cycle D.
+
+  **Section 6's order derivation also diverges from the shipped engine.** `total_order` on a
+  trace and `channel_order` on an envelope both ship validated and read by nothing. The engine
+  derives order from the clock alone, so it behaves the same on a channel that gives a total
+  order and on one that does not.
 - The remaining rows land in the schema as written.
 
 **What the schema cannot express, which is cycle B's input.** This is one list, not two:
@@ -1120,10 +1130,11 @@ that delegation works.**
    so. The ambiguity was in the design rather than in the implementation, which is why it is
    recorded here: a later cycle reading the old wording would reintroduce it.
 7. **Where prefix validation lives — resolved in cycle A.1.** `check_machine` now calls
-   `prefix_problem` itself, so a caller who uses `check_machine` directly — the documented
-   answer to *"is this machine well-formed"*, and what a caller such as the cycle B engine should use. The engine itself takes a machine
-   that the caller has already checked and does not call it — gets prefix
-   validation without also running `check_all`'s pairwise collision check. `check_all` still
+   `prefix_problem` itself. A caller who uses `check_machine` directly therefore gets prefix
+   validation without also running `check_all`'s pairwise collision check. That is the
+   documented answer to *"is this machine well-formed"*, and a caller such as the cycle B
+   engine should use it. The engine itself takes a machine that the caller has already
+   checked and does not call `check_machine`; only `registry.py` does. `check_all` still
    calls `prefix_problem` too, to decide which machines are fit to compare for a collision;
    the two calls answer different questions and neither makes the other redundant.
 8. **Whether a branch whose every future ends badly should be reported — settled on
