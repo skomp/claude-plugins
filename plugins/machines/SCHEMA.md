@@ -826,7 +826,10 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
 
 - **`legal` answers two different questions.** From `verdict()` it means *this trace is a
   legal run of this machine*: it is false when the fold refused any message, and `reason`
-  names the first refusal. From `gate()` it means *may this outbound message be sent now*: a
+  names the first refusal. It is also false when the trace already spent more than a
+  declared cap (a negative `headroom`), and `reason` then names the role and the overspend.
+  The engine does not attribute the overspend to a particular message: which message busted
+  a cap counted per role and per channel is left to a later cycle. From `gate()` it means *may this outbound message be sent now*: a
   refusal in the history does not by itself refuse an outbound message, though the history is
   still reported in `refusals`.
 - **`may_send` still lists the folded state's offers when `legal` is false.** They are what
@@ -847,7 +850,8 @@ bound*, and no default is invented. Otherwise it carries `limit`, `scope`, `spen
 - Under `per: channel`, `headroom[role] = limit - sum(spent.values())` **for every role**. The
   numbers are equal on purpose: there is one budget and each role sees all of what is left.
   **They must never be summed**; doing so counts the one budget once per role.
-- Headroom can go negative when a trace overspends. Only a `signal: true` transition spends;
+- Headroom can go negative when a trace overspends, and `verdict()` then reports the trace
+  as not a legal run (see `legal`, above). Only a `signal: true` transition spends;
   a `signal: false` transition is a local move and never counts.
 
 ### The clock and the four order values
@@ -856,12 +860,20 @@ Each message carries a clock in its envelope. **The clock is per sender; the cap
 role.** One sender may act in two roles, and two senders may share a role, so the two counts
 must not be confused.
 
-| `order` | Means | Message |
-|---|---|---|
-| `ok` | Accepted, nothing concurrent | accepted |
-| `duplicate` | Same sender, clock equal to its high-water mark | **refused** |
-| `out-of-order` | Same sender, clock below its high-water mark; or a clock above `max(seen) + 1`, which claims to follow something unseen (the gap is named in the refusal's detail) | **refused** |
-| `concurrent` | Another sender's clock is equal or higher | accepted; `concurrent_with` names those senders |
+| Value | Means | Message | Appears as |
+|---|---|---|---|
+| `ok` | Accepted, nothing concurrent | accepted | the `order` field |
+| `duplicate` | Same sender, clock equal to its high-water mark | **refused** | a refusal's `reason` |
+| `out-of-order` | Same sender, clock below its high-water mark; or a clock above `max(seen) + 1`, which claims to follow something unseen (the gap is named in the refusal's detail) | **refused** | a refusal's `reason` |
+| `concurrent` | Another sender's clock is equal or higher | accepted; `concurrent_with` names those senders | the `order` field |
+
+The `order` field of a verdict (and of a fold step) takes only two of these values, `ok` and
+`concurrent`, because a refused message makes no step. `duplicate` and `out-of-order` appear
+only as the `reason` of a refusal.
+
+The engine derives order from the clock alone. `total_order` on a trace and `channel_order`
+on an envelope are validated and carried, and **nothing reads them yet**: a channel that
+gives a total order is treated exactly like one that does not.
 
 The gap rule fires only once a message has been accepted: the first accepted message sets the
 baseline, whatever its clock. Across senders an equal or lower clock is reported and nothing
@@ -876,8 +888,8 @@ failure made silent.
 
 ### The outbound gate
 
-`gate()` refuses for exactly four reasons: `not permitted here`, `cap exhausted`,
-`terminal state` and `ambiguous`. An outbound field of the wrong Python type is refused as
+`gate()` refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
+`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An outbound field of the wrong Python type is refused as
 `not permitted here`. The gate **stamps the outbound clock and discards any clock the caller
 supplied**: a sender cannot choose it. A truncated fold is never legal, and the reason names
 the truncation.

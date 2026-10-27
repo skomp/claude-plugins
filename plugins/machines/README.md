@@ -33,13 +33,16 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   `remaining`, `effects`, `order`, `concurrent_with`, every guard reading, every world read,
   the outbound clock, every refusal, and whether the fold was `truncated`.
 - **`legal` answers two questions.** From `verdict()` it means *this trace is a legal run*,
-  and it is false when the fold refused any message; `reason` names the first refusal.
+  and it is false when the fold refused any message; `reason` names the first refusal. It
+  is also false when the trace already exceeded a declared cap (a negative `headroom`); the
+  engine does not attribute the overspend to a particular message.
   From `gate()` it means *may this message be sent now*; an old refusal in the history is
   still reported in `refusals` but does not by itself refuse an outbound message. When
   `legal` is false, `may_send` still lists the offers of the folded state — they are the
   state's offers, not a permission.
 - **The clock** orders messages and detects duplicates, per sender. Four order values:
-  `ok`, `duplicate`, `out-of-order`, `concurrent`. Within one sender a clock that does not
+  `ok`, `duplicate`, `out-of-order`, `concurrent`; the `order` field only ever holds `ok`
+  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a clock that does not
   rise is refused. Across senders an equal or lower clock is reported as `concurrent` and
   **neither message is refused**. The gate stamps the outbound clock and discards any
   clock the caller supplied.
@@ -47,8 +50,8 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   declaration has no `cap`. Otherwise `spent` and `headroom` map every declared role. Under
   `per: channel` the headroom is the same shared number for every role, so it must never be
   summed.
-- **The gate** refuses for exactly four reasons: `not permitted here`, `cap exhausted`,
-  `terminal state`, `ambiguous`.
+- **The gate** refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
+  `terminal state`, `ambiguous`, and the truncation refusal.
 - **`effects` is one unclassified tuple.** The spec promises a `transport` / `agent` split;
   what classifies a verb is the transport declaration, which is a later cycle, so the split
   waits.
