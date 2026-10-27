@@ -1,0 +1,424 @@
+import unittest
+from pathlib import Path
+
+from machines.declaration import parse
+from machines.envelope import Envelope, Message, Trace, load_trace
+from machines.fold import MAX_FOLD_STEPS, fold
+from machines.machine import (FIELDS, Field, Guard, Machine, Register, State,
+                              Transition, check_machine)
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _msg(kind, by, sender, clock, fields=None, world_reads=()):
+    return Message(kind, by, Envelope(clock, sender), fields, world_reads)
+
+
+def _trace(messages):
+    return Trace("c", "m", "v1", True, messages)
+
+
+def _paxos():
+    return parse((FIXTURES / "valid-paxos-acceptor.md").read_text())
+
+
+def _machine(transitions, registers=None, fields=None, kinds=("step",),
+             roles=("r",), states=("a", "b")):
+    return Machine(
+        "m", "v1", "m:v1 ", {r: "session" for r in roles}, list(kinds), None,
+        states[0],
+        {s: State(s, accepting=True) for s in states}, transitions,
+        fields=fields, registers=registers)
+
+
+def _ge_only_machine():
+    return _machine(
+        [Transition("a", "step", "r", "b", guard=Guard("n", "ge", "reg"))],
+        registers={"reg": Register("reg", "max", "n", ["step"], 5)},
+        fields={"n": Field("n", "int")})
+
+
+class FixtureFolds(unittest.TestCase):
+    def test_the_session_relay_fixture_folds_to_concluded(self):
+        m = parse((FIXTURES / "valid-session-relay.md").read_text())
+        f = fold(m, load_trace(FIXTURES / "trace-session-relay.json"))
+        self.assertEqual(f.state, "concluded")
+        self.assertEqual(f.refusals, ())
+        self.assertEqual(f.spent, {"initiator": 2, "responder": 2})
+        self.assertEqual(f.clocks, {"repo-a": 3, "repo-b": 4})
+        self.assertEqual(f.outbound_clock, 5)
+        self.assertEqual([s.order for s in f.fired], ["ok"] * 4)
+        self.assertEqual(
+            [(s.index, s.frm, s.to, s.transition.frm, s.transition.on,
+              s.transition.by, s.transition.to) for s in f.fired],
+            [(0, "unopened", "awaiting-triage",
+              "unopened", "triage", "initiator", "awaiting-triage"),
+             (1, "awaiting-triage", "awaiting-answer",
+              "awaiting-triage", "question", "responder", "awaiting-answer"),
+             (2, "awaiting-answer", "awaiting-triage",
+              "awaiting-answer", "answer", "initiator", "awaiting-triage"),
+             (3, "awaiting-triage", "concluded",
+              "awaiting-triage", "conclusion", "responder", "concluded")])
+        self.assertEqual(f.fired[0].transition.effects,
+                         ["label.add:session-relay:open"])
+        self.assertEqual(f.fired[3].transition.effects,
+                         ["label.remove:session-relay:open"])
+
+    def test_the_paxos_fixture_folds_to_decided_and_remembers_the_ballot(self):
+        m = _paxos()
+        f = fold(m, load_trace(FIXTURES / "trace-paxos-acceptor.json"))
+        self.assertEqual(f.state, "decided")
+        self.assertEqual(f.registers, {"highest_promised": 5})
+        self.assertEqual(f.spent, {"proposer": 2, "acceptor": 2})
+        self.assertEqual(f.clocks, {"p1": 3, "a1": 4})
+
+    def test_an_empty_trace_is_the_initial_state_and_clock_one(self):
+        f = fold(_paxos(), _trace([]))
+        self.assertEqual((f.state, f.outbound_clock, f.steps, f.truncated),
+                         ("idle", 1, 0, False))
+        self.assertEqual(f.registers, {"highest_promised": 0})
+
+    def test_the_limit_constant_exists(self):
+        self.assertIsInstance(MAX_FOLD_STEPS, int)
+
+    def test_the_documents_state_the_limit_the_constant_holds(self):
+        """SCHEMA.md and README.md quote the fold limit; they cannot drift."""
+        self.assertEqual(MAX_FOLD_STEPS, 10000)
+        root = Path(__file__).parent.parent
+        for name in ("SCHEMA.md", "README.md"):
+            self.assertIn("{:,} messages".format(MAX_FOLD_STEPS),
+                          (root / name).read_text(), name)
+
+
+class Ordering(unittest.TestCase):
+    def test_a_guard_reads_the_register_before_the_arriving_message_is_folded_in(self):
+        f = fold(_paxos(), _trace([_msg("prepare", "proposer", "p1", 1,
+                                        {"ballot": 5})]))
+        self.assertEqual(f.state, "prepared")  # NOT "idle": 5 > 5 is False
+        self.assertEqual(f.registers, {"highest_promised": 5})
+        reading = next(g for g in f.guards if g.op == "gt")
+        self.assertEqual((reading.field_value, reading.register_value,
+                          reading.atom, reading.fired), (5, 0, "GT", True))
+
+
+class GuardRefusals(unittest.TestCase):
+    def test_a_prepare_without_its_ballot_field_is_refused_because_both_guards_are_false(self):
+        f = fold(_paxos(), _trace([_msg("prepare", "proposer", "p1", 1, {})]))
+        self.assertEqual(f.state, "idle")
+        self.assertEqual([r.reason for r in f.refusals], ["no transition"])
+        self.assertEqual([g.fired for g in f.guards], [False, False])
+        self.assertEqual([g.atom for g in f.guards], [None, None])
+
+    def test_an_incomplete_guard_set_refuses_the_outcome_it_omits(self):
+        f = fold(_ge_only_machine(), _trace([_msg("step", "r", "s1", 1,
+                                                   {"n": 3})]))
+        self.assertEqual([r.reason for r in f.refusals], ["no transition"])
+        self.assertEqual(f.guards[0].atom, "LT")
+
+    def test_a_refusal_does_not_advance_state_registers_spent_or_clock(self):
+        m = _paxos()
+        f = fold(m, _trace([_msg("prepare", "proposer", "p1", 7, {}),
+                            _msg("prepare", "proposer", "p1", 8,
+                                 {"ballot": 2})]))
+        self.assertEqual(f.state, "prepared")
+        self.assertEqual(f.clocks, {"p1": 8})
+        self.assertEqual(f.refusals[0].index, 0)
+        self.assertEqual(f.fired[0].index, 1)
+
+    def test_an_operator_outside_the_vocabulary_does_not_fire_and_does_not_raise(self):
+        m = _machine(
+            [Transition("a", "step", "r", "b", guard=Guard("n", "bogus", "reg"))],
+            registers={"reg": Register("reg", "max", "n", ["step"], 0)},
+            fields={"n": Field("n", "int")})
+        f = fold(m, _trace([_msg("step", "r", "s", 1, {"n": 1})]))
+        self.assertEqual([r.reason for r in f.refusals], ["no transition"])
+        self.assertFalse(f.guards[0].fired)
+        self.assertIn("bogus", f.guards[0].note)
+
+    def test_a_guard_naming_an_undeclared_register_does_not_fire_and_does_not_raise(self):
+        m = _machine(
+            [Transition("a", "step", "r", "b", guard=Guard("n", "gt", "nope"))],
+            fields={"n": Field("n", "int")})
+        f = fold(m, _trace([_msg("step", "r", "s", 1, {"n": 1})]))
+        self.assertEqual([r.reason for r in f.refusals], ["no transition"])
+
+
+class OtherRefusals(unittest.TestCase):
+    def test_an_undeclared_kind_is_refused_by_name_not_a_key_error(self):
+        f = fold(_paxos(), _trace([_msg("gossip", "proposer", "p1", 1)]))
+        self.assertEqual([r.reason for r in f.refusals], ["undeclared kind"])
+        self.assertEqual(f.state, "idle")
+
+    def test_an_undeclared_role_is_refused_by_name(self):
+        f = fold(_paxos(), _trace([_msg("prepare", "learner", "p1", 1,
+                                        {"ballot": 1})]))
+        self.assertEqual([r.reason for r in f.refusals], ["undeclared role"])
+
+    def test_a_message_whose_by_is_not_the_states_holder_fires_nothing(self):
+        f = fold(_paxos(), _trace([_msg("prepare", "acceptor", "a1", 1,
+                                        {"ballot": 1})]))
+        self.assertEqual([r.reason for r in f.refusals], ["no transition"])
+        self.assertEqual(f.state, "idle")
+        self.assertEqual(f.registers, {"highest_promised": 0})
+
+    def test_a_bool_in_an_int_field_is_refused_rather_than_compared(self):
+        f = fold(_paxos(), _trace([_msg("prepare", "proposer", "p1", 1,
+                                        {"ballot": True})]))
+        self.assertEqual([r.reason for r in f.refusals], ["field type"])
+        self.assertEqual(f.guards, ())
+        self.assertEqual(f.state, "idle")
+
+    def test_an_int_in_a_bool_field_is_refused(self):
+        m = _machine([Transition("a", "step", "r", "b")],
+                     fields={"flag": Field("flag", "bool")})
+        f = fold(m, _trace([_msg("step", "r", "s", 1, {"flag": 1})]))
+        self.assertEqual([r.reason for r in f.refusals], ["field type"])
+
+    def test_two_transitions_that_differ_only_in_effects_are_refused_as_ambiguous(self):
+        m = _machine([
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=["label.add:one"]),
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=["label.add:two"])])
+        self.assertEqual(check_machine(m), [])  # the checker passes it
+        f = fold(m, _trace([_msg("step", "r", "s", 1)]))
+        self.assertEqual([r.reason for r in f.refusals], ["ambiguous"])
+        self.assertEqual(f.state, "a")
+        self.assertEqual(f.fired, ())
+        self.assertEqual(f.spent, {"r": 0})
+        self.assertEqual(f.refusals[0].detail.count("('a', 'step', 'r', 'b')"), 2)
+
+    def test_overlapping_guards_are_ambiguous_and_every_guard_is_read(self):
+        m = _machine(
+            [Transition("a", "step", "r", "b", guard=Guard("n", "ge", "reg")),
+             Transition("a", "step", "r", "a", guard=Guard("n", "le", "reg"))],
+            registers={"reg": Register("reg", "max", "n", ["step"], 5)},
+            fields={"n": Field("n", "int")})
+        f = fold(m, _trace([_msg("step", "r", "s", 1, {"n": 5})]))
+        self.assertEqual([r.reason for r in f.refusals], ["ambiguous"])
+        self.assertEqual([g.fired for g in f.guards], [True, True])
+        self.assertEqual(f.registers, {"reg": 5})
+
+
+class Registers(unittest.TestCase):
+    def _reg_machine(self, fold_kind, on=("step",), initial=0):
+        return _machine(
+            [Transition("a", "step", "r", "a"),
+             Transition("a", "other", "r", "a")],
+            registers={"reg": Register("reg", fold_kind, "n", list(on),
+                                       initial)},
+            fields={"n": Field("n", "int")}, kinds=("step", "other"))
+
+    def test_max_keeps_the_highest_value_seen_and_last_keeps_the_most_recent(self):
+        msgs = [_msg("step", "r", "s", i + 1, {"n": v})
+                for i, v in enumerate([3, 9, 4])]
+        self.assertEqual(fold(self._reg_machine("max"), _trace(msgs))
+                         .registers, {"reg": 9})
+        self.assertEqual(fold(self._reg_machine("last"), _trace(msgs))
+                         .registers, {"reg": 4})
+
+    def test_a_register_is_untouched_by_a_kind_not_in_its_on_list(self):
+        f = fold(self._reg_machine("last"),
+                 _trace([_msg("other", "r", "s", 1, {"n": 8})]))
+        self.assertEqual(f.registers, {"reg": 0})
+
+    def test_a_register_holds_its_declared_initial_before_any_matching_message(self):
+        f = fold(self._reg_machine("max", initial=7), _trace([]))
+        self.assertEqual(f.registers, {"reg": 7})
+
+    def test_a_register_whose_field_is_absent_from_a_matching_message_is_untouched(self):
+        f = fold(self._reg_machine("last", initial=7),
+                 _trace([_msg("step", "r", "s", 1, {})]))
+        self.assertEqual(f.registers, {"reg": 7})
+        self.assertEqual(f.refusals, ())
+
+
+class Bookkeeping(unittest.TestCase):
+    def test_the_outbound_clock_is_the_max_over_all_senders_plus_one(self):
+        f = fold(_paxos(), _trace([
+            _msg("prepare", "proposer", "p1", 9, {"ballot": 1}),
+            _msg("promise", "acceptor", "a1", 2)]))
+        self.assertEqual(f.clocks, {"p1": 9, "a1": 2})
+        self.assertEqual(f.outbound_clock, 10)
+
+    def test_world_reads_are_recorded_and_opaque(self):
+        from machines.envelope import WorldRead
+        f = fold(_paxos(), _trace([_msg("prepare", "proposer", "p1", 1,
+                                        {"ballot": 1},
+                                        [WorldRead("gh", {"x": [1]})])]))
+        self.assertEqual([(w.index, w.verb, w.result) for w in f.world_reads],
+                         [(0, "gh", {"x": [1]})])
+
+    def test_a_world_read_on_a_refused_message_is_kept(self):
+        from machines.envelope import WorldRead
+        f = fold(_paxos(), _trace([
+            _msg("no-such-kind", "proposer", "p1", 1, {},
+                 [WorldRead("gh", {"x": 1})]),
+            _msg("prepare", "proposer", "p1", 1, {"ballot": 1},
+                 [WorldRead("db", {"y": 2})])]))
+        self.assertEqual([r.reason for r in f.refusals], ["undeclared kind"])
+        self.assertEqual([(w.index, w.verb) for w in f.world_reads],
+                         [(0, "gh"), (1, "db")])
+
+
+WORLD = [{"verb": "db.query", "result": {"rows": 3, "status": "green"}}]
+OTHER = [{"verb": "db.query",
+          "result": {"rows": 99999, "status": "on fire", "x": [1, 2]}}]
+
+
+def _trace_with_world_reads(raw_reads):
+    """The paxos fixture trace with `raw_reads` attached to EVERY message."""
+    from machines.envelope import WorldRead
+    base = load_trace(FIXTURES / "trace-paxos-acceptor.json")
+    reads = [WorldRead(r["verb"], r["result"]) for r in raw_reads]
+    return _trace([Message(m.kind, m.by, m.envelope, m.fields, reads)
+                   for m in base.messages])
+
+
+def _messy_trace_with_world_reads(raw_reads):
+    """A paxos trace that exercises every refusal kind the fold has and one
+    concurrent message, with `raw_reads` on every message. The clean fixture
+    leaves refusals/order/concurrent_with empty or constant, so comparing them
+    there proves nothing."""
+    from machines.envelope import WorldRead
+    reads = [WorldRead(r["verb"], r["result"]) for r in raw_reads]
+    rows = [
+        ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # ok -> prepared
+        ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # duplicate
+        ("promise", "acceptor", "a1", 9, {}),               # out-of-order
+        ("promise", "acceptor", "a1", 2, {"ballot": "x"}),  # field type
+        ("prepare", "proposer", "p1", 2, {"ballot": 6}),    # no transition
+        ("promise", "acceptor", "a1", 1, {}),               # concurrent
+        ("accept-request", "proposer", "p1", 2, {"ballot": 5}),  # ok
+    ]
+    return _trace([_msg(k, b, snd, c, f, reads) for k, b, snd, c, f in rows])
+
+
+def _norm(value):
+    """Value objects compared by attribute, never by identity and never by an
+    `__eq__` on the verdict types (one that omitted a field would pass while
+    testing less)."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_norm(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, _norm(v)) for k, v in value.items()))
+    if hasattr(value, "__dict__"):
+        return (type(value).__name__,
+                tuple(sorted((k, _norm(v)) for k, v in vars(value).items())))
+    return value
+
+
+class WorldReadsNeverBranch(unittest.TestCase):
+    """SPEC sections 6 and 14: the engine folds channel reads and never
+    branches on a world read. The trace is the only record of a conversation,
+    so a branch on a world result would let two folds of one trace disagree."""
+
+    def test_the_verdict_is_identical_however_a_world_read_turned_out(self):
+        from machines.engine import verdict
+        a = verdict(_paxos(), _trace_with_world_reads(WORLD))
+        b = verdict(_paxos(), _trace_with_world_reads(OTHER))
+        for name in ("legal", "reason", "state", "holder", "accepting",
+                     "terminal", "may_send", "remaining", "order",
+                     "concurrent_with", "outbound_clock", "truncated",
+                     "refusals", "effects", "guards"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        self.assertTrue(a.guards)   # the comparison is not vacuous
+        self.assertNotEqual(_norm(a.world_reads), _norm(b.world_reads))
+
+    def test_the_fold_is_identical_however_a_world_read_turned_out(self):
+        a = fold(_paxos(), _trace_with_world_reads(WORLD))
+        b = fold(_paxos(), _trace_with_world_reads(OTHER))
+        for name in ("state", "registers", "spent", "clocks", "fired",
+                     "refusals", "guards", "truncated", "steps",
+                     "outbound_clock"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        self.assertEqual(a.registers, {"highest_promised": 5})
+
+    def test_the_invariance_covers_refusals_and_order_non_vacuously(self):
+        from machines.engine import verdict
+        a = fold(_paxos(), _messy_trace_with_world_reads(WORLD))
+        # Guard the comparison itself: if a fixture edit empties these, the
+        # invariance below would pass while testing nothing.
+        self.assertEqual(sorted(r.reason for r in a.refusals),
+                         ["duplicate", "field type", "no transition",
+                          "out-of-order"])
+        self.assertIn("concurrent", [s.order for s in a.fired])
+        self.assertTrue(any(s.concurrent_with for s in a.fired))
+        self.assertTrue(a.guards)
+        b = fold(_paxos(), _messy_trace_with_world_reads(OTHER))
+        for name in ("state", "registers", "spent", "clocks", "fired",
+                     "refusals", "guards", "truncated", "steps",
+                     "outbound_clock"):
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        va = verdict(_paxos(), _messy_trace_with_world_reads(WORLD))
+        vb = verdict(_paxos(), _messy_trace_with_world_reads(OTHER))
+        for name in ("legal", "reason", "state", "holder", "accepting",
+                     "terminal", "may_send", "remaining", "order",
+                     "concurrent_with", "outbound_clock", "truncated",
+                     "refusals", "effects", "guards"):
+            self.assertEqual(_norm(getattr(va, name)),
+                             _norm(getattr(vb, name)), name)
+        self.assertEqual(len(va.refusals), 4)
+        self.assertEqual(va.order, "ok")
+
+    def test_a_world_read_is_carried_into_the_verdict_naming_the_message(self):
+        from machines.engine import verdict
+        v = verdict(_paxos(), _trace_with_world_reads(WORLD))
+        self.assertEqual([(w.index, w.verb) for w in v.world_reads],
+                         [(i, "db.query") for i in range(len(v.world_reads))])
+        self.assertEqual(len(v.world_reads), 4)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+def _loop_machine():
+    return _machine([Transition("a", "step", "r", "a")], states=("a",))
+
+
+def _long_trace(n, kind="step"):
+    return _trace([_msg(kind, "r", "x", i + 1) for i in range(n)])
+
+
+class FoldLimit(unittest.TestCase):
+    def test_a_fold_stops_at_its_limit_and_says_so(self):
+        f = fold(_loop_machine(), _long_trace(50), limit=10)
+        self.assertTrue(f.truncated)
+        self.assertEqual(f.steps, 10)
+        self.assertEqual(len(f.fired), 10)
+        self.assertEqual(f.outbound_clock, 11)  # the partial fold, not the trace
+
+    def test_a_fold_inside_its_limit_is_not_marked_truncated(self):
+        f = fold(_loop_machine(), _long_trace(5), limit=10)
+        self.assertFalse(f.truncated)
+        self.assertEqual(f.steps, 5)
+
+    def test_a_trace_exactly_at_the_limit_is_not_truncated(self):
+        f = fold(_loop_machine(), _long_trace(10), limit=10)
+        self.assertFalse(f.truncated)
+        self.assertEqual(f.steps, 10)
+
+    def test_steps_counts_refused_messages_as_well_as_accepted(self):
+        f = fold(_loop_machine(), _long_trace(7, kind="nope"), limit=10)
+        self.assertEqual((f.steps, len(f.fired), len(f.refusals)), (7, 0, 7))
+
+    def test_refused_messages_count_toward_the_limit(self):
+        f = fold(_loop_machine(), _long_trace(50, kind="nope"), limit=10)
+        self.assertEqual((f.truncated, f.steps), (True, 10))
+
+    def test_the_default_limit_is_the_module_constant(self):
+        f = fold(_loop_machine(), _long_trace(MAX_FOLD_STEPS + 1))
+        self.assertEqual((f.truncated, f.steps), (True, MAX_FOLD_STEPS))
+
+    def test_the_limit_is_an_engine_defence_and_not_a_declared_bound(self):
+        # No declaration field changed. Both shipped declarations still parse
+        # and check clean, and neither mentions a fold limit.
+        for name in ("valid-session-relay.md", "valid-paxos-acceptor.md"):
+            m = parse((FIXTURES / name).read_text())
+            self.assertEqual(check_machine(m), [])
+        self.assertNotIn("fold", set(FIELDS))
+        self.assertNotIn("limit", set(FIELDS))

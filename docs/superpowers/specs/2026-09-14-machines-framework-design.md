@@ -2,10 +2,9 @@
 
 **Written** 2026-09-14. **Tracked in** `claude-plugins#26`. **Handoff**
 `docs/handoffs/2026-09-14-signal-framework.md` on `origin/session-relay`.
-**Status** design agreed; **cycle A is built, and cycle A.1 is built on top of it** — the
-declaration schema and the checker, now with typed header fields, registers, guards and a
-scoped, strengthened cap check, ship in `plugins/machines/`. Cycles B, C and D are not
-started.
+**Status** design agreed; **cycles A, A.1 and B are built** — the declaration schema, the
+checker and the engine (fold, verdict, outbound gate, the envelope's clock) ship in
+`plugins/machines/`. Cycles C and D are not started.
 **Amended** during cycle A with the four changes agreed after this spec merged in
 `PR: claude-plugins#29` and tracked in `claude-plugins#28`: they are folded
 into §6, §7, §8, §9 and the new §12, and the separate changes document is gone.
@@ -16,18 +15,22 @@ their result touches (`#34`), and the two later comments on `#28` — the limits
 accepting-state checks, and the finding that `session-relay`'s addressing half has no
 channel. They are folded into §4, §5, §6, §7, §8, §9, §10, §11, §13 and §14. **Cycle A.1
 built the first of those five decisions, and the accepting-state limit's fix, into the
-schema and checker; the clock and the verb classification are still unbuilt, and the
-addressing question is still open for cycle D.**
+schema and checker, and cycle B then built the clock and the engine. The verb
+classification is still unbuilt, because it needs the transport declaration, which is cycle
+C's; the addressing question is still open for cycle D.**
 
 **Read every "shipped" and "not built" mark in this document as load-bearing.** Cycle A
 shipped a schema and a checker; cycle A.1 shipped typed header fields, registers, guards,
-guard determinism, and a scoped, strengthened cap check into the same schema and checker —
-**everything else this 2026-09-15 amendment adds is still unbuilt.** There is still no
-clock, no verb classification and no engine in `plugins/machines/`. Two places where the
-*shipped* code and this document still disagree are named where they occur — §7's effect
+guard determinism, and a scoped, strengthened cap check into the same schema and checker;
+**cycle B shipped the engine** — the fold, the verdict, the outbound gate, the envelope's
+clock and the order verdict, run-time guard evaluation, and the rule that the engine never
+branches on a world read. **Still unbuilt:** the transport declaration and the verb
+classification (cycle C, with the installer), and the dispatcher and the `session-relay`
+backport (cycle D). There is no verb classification in `plugins/machines/`. Two places where
+the *shipped* code and this document still disagree are named where they occur — §7's effect
 vocabulary and §9's verb-against-transport check — rather than being smoothed over; both
-wait on cycle C. §9's cap check no longer diverges: A.1 built the stronger form this
-document already called for.
+wait on cycle C. §6's two effect lists are a third, recorded where they occur. §9's cap check
+no longer diverges: A.1 built the stronger form this document already called for.
 
 ---
 
@@ -111,7 +114,7 @@ item 1.
 
 | Layer | Holds | Checked by |
 |---|---|---|
-| **Channel** | which channel, who holds it, who acts next, **the order of the messages and their identity** | linearity; **the envelope's clock (the envelope subsection below) — not built** |
+| **Channel** | which channel, who holds it, who acts next, **the order of the messages and their identity** | linearity; **the envelope's clock (the envelope subsection below) — built in cycle B** |
 | **Protocol** | states, legal kinds per state, which states accept, which states are terminal, an optional cap, **the typed header fields a transition may test — built in cycle A.1** | product construction, at install |
 | **Content** | the message body | **nothing, deliberately** |
 
@@ -150,7 +153,7 @@ make sure it never starts to.
 
 ### The envelope: order belongs to the channel, not to the declaration
 
-**Not built. Cycle B.** `claude-plugins#32`.
+**Built in cycle B.** `claude-plugins#32`.
 
 Every protocol message carries a **monotonic clock in its envelope**, not in the
 declaration. Order is a channel-layer fact, the same kind of fact as *who holds the
@@ -184,6 +187,29 @@ messages from different senders may carry the *same* value, and that means they 
 concurrent — it is not a violation and the engine must not refuse either of them. What the
 engine refuses is a message from a sender whose clock did not advance past that sender's own
 last message, and a message claiming to follow something the receiver has not seen.
+
+**What cycle B shipped, and the decisions it took.**
+
+- **The clock is named `clock`, never `seq`.** `session-relay`'s `seq=` stays what it is.
+- **There are four order values** — `ok`, `duplicate`, `out-of-order`, `concurrent` — and no
+  fifth.
+- **An equal clock across two senders is reported as `concurrent`, and the engine refuses
+  neither message.** The same holds for a lower clock across senders.
+- **The gap case is `out-of-order`.** A clock above `max(seen) + 1` claims to follow something
+  the engine has not seen. The engine reports it as `out-of-order` and names the gap in the
+  refusal's detail, for example `"clock 9 follows nothing seen; highest seen is 6"`. The
+  author chose this on 2026-10-26 over a fifth value, because the wire format is permanent
+  once comments carry it.
+- **The gap rule fires only once a message has been accepted.** The first accepted message
+  sets the baseline, whatever its clock. This is a decision cycle B took. **Cycle D will meet
+  it:** a backport that joins a thread in the middle must expect its first message to set the
+  baseline and not to be refused for a gap.
+- **`total_order` is a required boolean on the trace fixture** in cycle B. The transport's
+  declaration of it (§8) waits for cycle C. **The engine does not read it**, and it does not
+  read `channel_order` on an envelope either: both are validated and carried, and the engine
+  derives order from the clock alone. The paragraphs of this section and of §8 that describe
+  the engine's behaviour as differing with the channel's total order describe the intended
+  design, not cycle B.
 
 **This does not replace `session-relay`'s `seq=`, and cycle D must not let it try.** See
 §10, which has the measurement and the argument; the two are different quantities with
@@ -255,13 +281,13 @@ the install-time check has a real trigger rather than an approximated one.
 |---|---|---|
 | **installer** | `/machines:install <publisher>/<repo>` | clones at a pinned ref, parses the declaration, runs the conflict check, **shows the code it is about to install and asks for consent**, writes `~/.claude-machine/` — **cycle C, not built** |
 | **dispatcher** | a message arrives | strips the transport wrapper, matches the prefix, resolves machine + version — or hands back, silently — **cycle D, not built** |
-| **engine** | after dispatch | folds the channel into current state; **evaluates the guards on the transitions it considers**; emits a verdict and a constraint; **gates the outbound message before it is sent** — **cycle B, not built** |
+| **engine** | after dispatch | folds the channel into current state; **evaluates the guards on the transitions it considers**; emits a verdict and a constraint; **gates the outbound message before it is sent** — **cycle B, shipped in `plugins/machines/`** |
 | **checker** | at install, and on demand | prefix collisions and post-prefix divergence, by product construction — **cycle A, shipped in `plugins/machines/`** |
 
 ### The engine emits a verdict, never an action
 
-**Not built. This is cycle B's central deliverable.** The three lines marked below are what
-this 2026-09-15 amendment adds to the shape agreed earlier.
+**Built in cycle B, with one divergence recorded below.** The three lines marked below are
+what the 2026-09-15 amendment added to the shape agreed earlier.
 
 ```
 legal?               yes | no, with the reason
@@ -282,6 +308,30 @@ world_reads[]        results of world-touching verbs that were folded in, each n
 ```
 
 Claude reads that and writes the content. **The framework never sees the content.**
+
+**What cycle B shipped, field by field.** The verdict is `machines.engine.Verdict`, with
+these fields: `legal`, `reason`, `state`, `holder`, `accepting`, `terminal`, `may_send`,
+`remaining`, `effects`, `order`, `concurrent_with`, `guards`, `world_reads`,
+`outbound_clock`, `refusals` and `truncated`. `remaining` is a `Remaining` with `limit`,
+`scope`, `spent` and `headroom`; `spent` and `headroom` are mappings over every declared role,
+in both cap scopes. Under `per: channel` the headroom numbers are equal on purpose, and a
+reader must not sum them.
+
+**The two effect lists shipped as one unclassified list.** The verdict carries
+`effects: tuple[str, ...]`, not `effects.transport[]` and `effects.agent[]`. **The promise
+waits; it is not dropped.** What classifies a verb is the transport declaration — the verb set
+with typed arguments and the world-touching marks — and that is cycle C's, because the
+installer reads and displays it. The shipped checker hardcodes three verbs (`label.add:<name>`,
+`label.remove:<name>`, `escalate`). To split the lists now, the engine would have to hardcode
+a classification of those three verbs, which is the generalising-from-one-instance failure
+§7 names, committed on purpose in the verdict. The cost is real: the *"the machine made me do
+this"* check that the two-performers subsection wants a human reader to perform **is not
+available until cycle C.** A reader must not assume that it is.
+
+**A truncated fold makes the verdict illegal.** The fold stops after `MAX_FOLD_STEPS` steps
+(10000), and the verdict then has `legal: False` and `truncated: True`. A verdict computed
+from a fold that did not finish is not a verdict about the channel, and reporting it as legal
+would be the quiet wrong answer this framework exists to prevent.
 
 **`remaining` promised a number the schema could not supply; cycle A.1 settled it.** This
 line reads *"cap headroom for **this sender** on **this channel**"*; §7 declared the cap
@@ -311,7 +361,8 @@ sender cannot forget it and cannot choose it.
 
 ### What the engine may read, which is narrower than what the transport may do
 
-**Not built. `claude-plugins#34`.** §8 classifies the transport's verbs; this is the
+**Built in cycle B. `claude-plugins#34`.** §8 classifies the transport's verbs (that
+classification is still cycle C's); this is the
 engine's side of that classification, and it is a rule about the engine, not about the
 transport:
 
@@ -326,6 +377,15 @@ between the two folds — **and the trace would stop being sufficient to rebuild
 conversation.** The framework has no runtime store (§14), so the trace is the only record
 there is. That is the price of having no runtime, and it is why the rule is absolute rather
 than a matter of taste.
+
+**The rule is pinned by an invariance test, not by a comment.** In
+`plugins/machines/tests/test_fold.py`,
+`test_the_verdict_is_identical_however_a_world_read_turned_out` and
+`test_the_fold_is_identical_however_a_world_read_turned_out` fold the same trace with
+different world-read payloads and require identical results.
+`test_the_invariance_covers_refusals_and_order_non_vacuously` extends the check to refusals
+and to the order value, and first asserts that the fixture produces refusals, so the
+comparison cannot pass while testing nothing.
 
 ### Two performers, and neither is the machine's author
 
@@ -561,10 +621,17 @@ list the messages on a channel, append one, send a signal, resolve a peer — ta
 returning JSON, holding nothing between calls. **It never sees the machine, the state, or the
 cap.**
 
-The consequence is the one that matters: a buggy or hostile transport **can misreport which
-messages exist**, but it **cannot forge a transition, skip the cap, or fake a terminal
-state**, because the engine is what counts and what decides. The framework's guarantees
-survive bundles we did not write. That is the whole reason for having an engine.
+The consequence is the one that matters, and it is narrower than it first reads. A buggy or
+hostile transport **can misreport which messages exist: it can leave one out, or add one
+nobody sent. Leaving messages out does change the folded state, and a trace with messages
+missing can let a role past a cap it would otherwise have hit.** What holds is this: **given
+the message list it was handed, the engine is what folds, counts and decides**, so a
+transport cannot make the engine accept a transition the declaration does not have, exceed
+the cap the declaration sets, or report a state the declaration does not define. **Every
+guarantee is about the trace, not about the conversation.** What a transport can do is change
+which trace the engine sees, and every guarantee ends at that trace. A trace is only as
+honest as whoever produced it. The engine's guarantees do not depend on the transport's
+code being correct about the declaration; they do depend on the trace being complete.
 
 **What the engine cannot bound is how wide a verb is.** Per §7, a machine is bounded only as
 tightly as its transport's verbs are specific, and **a transport whose verbs are general is not
@@ -882,8 +949,12 @@ it found a defect nothing predicted — which is the outcome it was written to p
   that job in the tests.
 - **Row 7 is not expressible in the declaration, and correctly so.** That is what the
   subsection above already argues — the comparison is a value the *engine* produces, not a
-  rule the declaration encodes — and nothing on this branch claims otherwise. Cycle B is where
-  it can be settled.
+  rule the declaration encodes — and nothing on this branch claims otherwise. **Cycle B did
+  not settle it, and did not build the comparison.** No `blocking` field is declared, read or
+  compared anywhere in `plugins/machines/`; neither shipped fixture declares one, and cycle B's
+  scope excluded row 7. What cycle B's verdict does is report what the fold can see. **Row 7
+  belongs to cycle D**, the cycle that re-expresses `session-relay`, because it needs a
+  `blocking` field that a real declaration makes.
 
   **Guards change what row 7 *could* be, and must not change what it *is*.**
   `claude-plugins#31` cites row 7 as its motivation, and once `blocking` is a typed
@@ -891,10 +962,19 @@ it found a defect nothing predicted — which is the outcome it was written to p
   section already has.** A guard is a rule an author remembers to write; the engine's
   comparison is a value it cannot avoid producing, and *"a computation that always runs cannot
   be skipped"* is precisely why `#17`'s rule failed the first time. So: the engine produces the
-  comparison and reports it, as before. A guard over `blocking` is available to an author who
-  wants a transition to *refuse* on the disagreement rather than proceed and report it — which
+  comparison and reports it. A guard over `blocking` is available to an author who wants a
+  transition to *refuse* on the disagreement rather than proceed and report it, which
   `session-relay` explicitly does not want (its rule 4 says use the signal, continue, and
-  report). Cycle B implements the engine's comparison. It does not implement row 7 as a guard.
+  report).
+
+  This passage is the intended design, not a record of shipped behaviour. **Cycle B did not
+  build the comparison**, either as an engine value or as a guard, and the engine produces and
+  reports nothing about row 7 today. The comparison belongs to cycle D.
+
+  **Section 6's order derivation also diverges from the shipped engine.** `total_order` on a
+  trace and `channel_order` on an envelope both ship validated and read by nothing. The engine
+  derives order from the clock alone, so it behaves the same on a channel that gives a total
+  order and on one that does not.
 - The remaining rows land in the schema as written.
 
 **What the schema cannot express, which is cycle B's input.** This is one list, not two:
@@ -1050,9 +1130,11 @@ that delegation works.**
    so. The ambiguity was in the design rather than in the implementation, which is why it is
    recorded here: a later cycle reading the old wording would reintroduce it.
 7. **Where prefix validation lives — resolved in cycle A.1.** `check_machine` now calls
-   `prefix_problem` itself, so a caller who uses `check_machine` directly — the documented
-   answer to *"is this machine well-formed"*, and what cycle B's engine will do — gets prefix
-   validation without also running `check_all`'s pairwise collision check. `check_all` still
+   `prefix_problem` itself. A caller who uses `check_machine` directly therefore gets prefix
+   validation without also running `check_all`'s pairwise collision check. That is the
+   documented answer to *"is this machine well-formed"*, and a caller such as the cycle B
+   engine should use it. The engine itself takes a machine that the caller has already
+   checked and does not call `check_machine`; only `registry.py` does. `check_all` still
    calls `prefix_problem` too, to decide which machines are fit to compare for a collision;
    the two calls answer different questions and neither makes the other redundant.
 8. **Whether a branch whose every future ends badly should be reported — settled on
@@ -1109,6 +1191,22 @@ that delegation works.**
     back for every machine, including the continuous ones. If a bound is needed after both
     points above, **make it an engine-side limit on one fold** — a runtime refusal to take
     unbounded steps, reported in the verdict — not a field an author must fill in.
+
+    **Settled in cycle B, in part.** The engine-side fold limit shipped, `MAX_FOLD_STEPS`
+    (10000) in `plugins/machines/lib/machines/fold.py`, and the verdict reports it as
+    `truncated: True` with `legal: False`. **There is no schema field and nothing a publisher
+    fills in; no second declared bound exists.** **Still open, and still cycle C's
+    precondition:** the proposal above to redefine the cap to count channel writes. The limit
+    bounds one fold; it does not remove the hole that a `wait` verb or an epsilon move would
+    open.
+
+    **Two measurements correct the numbers this cycle's plan started from.** First, the fold
+    costs about 16–22 µs per accepted message on the development host. A reference
+    implementation suggested about 6 µs. A second machine measured about 10 µs. Read this as a
+    measurement on a host, not as a universal fact. Second, **`fold` is quadratic in the
+    number of distinct senders**: the outbound clock and the concurrency scan each walk every
+    sender seen, on every message. 10,001 messages, each from a new sender, take about 8 s.
+    The fold limit bounds that worst case. The cost is tracked as its own issue.
 11. **Whether addressing is floor or a second kind of channel.** §10 records the finding —
     `session-relay`'s addressing half has no durable trace, so it cannot be a machine — and
     recommends **option 1: addressing is floor**, implemented by the framework, declared by
@@ -1226,7 +1324,7 @@ each one can find a defect before the next depends on it.
 | | Delivers | Why this order |
 |---|---|---|
 | **A** | the declaration schema + the checker | The checker is the framework's reason to exist, it needs no transport, no engine and no installer, and it can be run against a hand-written declaration. If the formalism cannot express `session-relay` on paper, that is found here, cheapest. **Shipped** |
-| **B** | the engine — fold, verdict, outbound gate; **and, added 2026-09-15:** guard evaluation at run time (§7), the envelope's clock and the order verdict (§4), and the rule that the engine never branches on a world read (§6) | Needs A's schema. Testable against a recorded thread with no transport at all, because a fixture is just the JSON a transport would have returned |
+| **B** | the engine — fold, verdict, outbound gate; **and, added 2026-09-15:** guard evaluation at run time (§7), the envelope's clock and the order verdict (§4), and the rule that the engine never branches on a world read (§6) | Needs A's schema. Testable against a recorded thread with no transport at all, because a fixture is just the JSON a transport would have returned. **Shipped** in `plugins/machines/` at 0.5.0, with `claude-plugins#48`. **What C and D inherit.** C inherits: the transport declaration, which carries the verb classification that splits the verdict's one `effects` list into the promised two, and the total-order statement that replaces the fixture's `total_order` boolean; and the open proposal to redefine the cap to count channel writes (§11.10). D inherits: the gap rule that fires only after a first accepted message, the clock that must never be renamed `seq=`, and the fold's cost, which is quadratic in distinct senders |
 | **C** | the installer, the registry, `/machines:install` | Needs A's checker to have something to run at install. This is the cycle that writes to `~/.claude-machine/` and asks for consent, so it is the one with outward-facing behaviour. **It now also carries the transport declaration** — the verb set with typed arguments, the world-touching marks and the total-order statement (§8) — because that is the file the installer reads and shows |
 | **D** | the dispatcher + the `session-relay` backport | Needs all three. The backport is the test of the whole, and §11.1's trigger measurement gates only this cycle. **It must decide §11.11** (addressing: floor, or a second channel kind) and must not rename the clock to `seq=` (§10) |
 

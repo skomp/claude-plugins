@@ -6,15 +6,90 @@ and check it before you trust it.
 ## What this ships, and what it does not
 
 **Cycle A shipped the schema and the checker; cycle A.1 built typed fields, registers,
-guard and a scoped, strengthened cap check into that same schema and checker.** There is
-no engine — nothing here runs a machine, advances a state, or emits a message. There is no
+guard and a scoped, strengthened cap check into that same schema and checker; cycle B
+built the engine.** There is an engine: given a machine and the recorded trace of a
+channel, it advances a state and emits a **verdict**. It still emits no message and
+performs no effect, because the verdict only names what would happen. There is no
 installer — nothing wires a declared machine into anything that dispatches real traffic.
 There is no dispatcher — nothing routes an inbound message to the machine that owns it.
 What exists is a closed declaration language, a parser for it, a set of checks that a
-single machine is well-formed, and a checker that runs those checks over every machine
-handed to it and reports whether any two claim the same message. That is the whole of
-cycle A and cycle A.1 together. Anything that talks about a machine actually running is a
-later cycle.
+single machine is well-formed, a checker that runs those checks over every machine handed
+to it and reports whether any two claim the same message, and an engine that folds a trace
+into a verdict. The engine is a library (`machines.engine`); `bin/machines-check` does not
+call it. Anything that wires the engine into a transport is a later cycle.
+
+## The engine
+
+`machines.engine.verdict(machine, trace)` reads a channel's recorded trace and answers
+*is this a legal run of this machine, and where does it stand?* `machines.engine.gate(machine,
+trace, outbound)` answers *may this outbound message be sent now?* Neither performs anything:
+`escalate`, in an effect list, is a word in a tuple.
+
+- **The fold** walks the trace and produces the state, every declared register, what each
+  role has spent against the cap, and every guard reading. A guard is read against its
+  register as it stood **before** the arriving message was folded in, and a guard whose
+  field is absent from the message is **false**, never an error.
+- **The verdict** names the state, the `holder`, `accepting`, `terminal`, `may_send`,
+  `remaining`, `effects`, `order`, `concurrent_with`, every guard reading, every world read,
+  the outbound clock, every refusal, and whether the fold was `truncated`.
+- **`legal` answers two questions.** From `verdict()` it means *this trace is a legal run*,
+  and it is false when the fold refused any message; `reason` names the first refusal. It
+  is also false when the trace already exceeded a declared cap (a negative `headroom`); the
+  engine does not attribute the overspend to a particular message.
+  From `gate()` it means *may this message be sent now*; an old refusal in the history is
+  still reported in `refusals` but does not by itself refuse an outbound message. When
+  `legal` is false, `may_send` still lists the offers of the folded state — they are the
+  state's offers, not a permission.
+- **The clock** orders messages and detects duplicates, per sender. Four order values:
+  `ok`, `duplicate`, `out-of-order`, `concurrent`; the `order` field only ever holds `ok`
+  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a clock that does not
+  rise is refused. Across senders an equal or lower clock is reported as `concurrent` and
+  **neither message is refused**. The gate stamps the outbound clock and discards any
+  clock the caller supplied.
+- **The cap is per role; the clock is per sender.** `remaining` is `None` exactly when the
+  declaration has no `cap`. Otherwise `spent` and `headroom` map every declared role. Under
+  `per: channel` the headroom is the same shared number for every role, so it must never be
+  summed.
+- **The gate** refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
+  `terminal state`, `ambiguous`, and the truncation refusal.
+- **`effects` is one unclassified tuple.** The spec promises a `transport` / `agent` split;
+  what classifies a verb is the transport declaration, which is a later cycle, so the split
+  waits.
+- **The fold has an engine-side limit** (10,000 messages, refused ones included). It is a
+  defence against a runaway trace, not a bound on a protocol, and nothing in a declaration
+  sets it. A fold that reaches it is `truncated` and the verdict is not legal.
+
+`SCHEMA.md`'s "What the engine does with a declaration" carries the arithmetic and the
+refusal reasons in full.
+
+## What the engine does not check
+
+The framework does not check meaning, and no part of it may appear to. The engine is the
+first part of this plugin that *runs* a protocol, which is why this list is here and not
+only in `SCHEMA.md`, which has it in full.
+
+1. **Content.** A trace has no slot for a message body. The engine reads kinds, roles,
+   declared fields and the envelope; whether a draft states a new fact, or an answer answers
+   the question, is not visible to it.
+2. **Meaning, including `accepting`.** The engine reports `accepting` because the
+   declaration says so. Nothing here can confirm a state marked accepting is a fine place
+   to stop.
+3. **Agreement.** A consensus-shaped machine, `paxos-acceptor` among them, gets its
+   sequencing and its declared invariant checked and nothing about agreement among peers.
+4. **Whether a guard will fire.** `may_send` names a guarded offer without evaluating it, as
+   no message exists yet. The checker cannot tell you a guard never fires either.
+5. **Whether the transport told the truth.** A hostile transport can misreport which messages
+   exist, and leaving messages out changes the state and can let a role past its cap. Given
+   the trace it was handed, the engine cannot be made to accept a transition the declaration
+   lacks, exceed its cap or report an undefined state; every guarantee is about the trace, not
+   the conversation.
+6. **Anything outside the channel.** A world read is carried into the verdict and the engine
+   never branches on it.
+7. **The clock is not `seq`, and `remaining` is not an ordinal.** One sender's tenth message
+   can carry a clock of about 19. Never render a visible `n of 10` from the clock.
+8. **Whether a declaration is unambiguous.** `check_machine` passes two transitions that
+   share `from`, `on`, `by` and `to` and differ only in `effects`; the engine refuses a
+   message that matches both as `ambiguous`. A known gap, filed as `claude-plugins#51`.
 
 ## The declaration
 
@@ -139,7 +214,8 @@ pytest is not assumed to be installed; the suite is plain `unittest`.
 
 You are declaring a communication protocol between two agents, sessions, or services as an
 explicit state machine and want it checked before you rely on it. There is no skill here to
-trigger — cycle A is a library and a command-line checker, nothing that fires on its own.
+trigger — this is a library, an engine and a command-line checker, nothing that fires on its own.
 
-Skip it if you want something that actually runs a protocol at conversation time; that is
-not built yet.
+Skip it if you want something that wires a protocol into a live transport, or that checks
+what a conversation *means*. The engine folds a recorded trace into a verdict; it does not
+connect to a channel, dispatch a message or perform an effect, and it does not read content.

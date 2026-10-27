@@ -768,9 +768,9 @@ Each entry is a transition, with these fields:
   outcomes that make it true. `eq` and `ne` are meaningful on a `bool` field (there are only
   two values, so equal-or-not is all there is to ask); `lt`/`le`/`gt`/`ge` are not (G3).
 
-  **Two engine semantics cycle B implements and this schema pins in advance**, even though
-  nothing in cycle A evaluates a guard, so that cycle B is working from one fixed answer
-  rather than inventing it at that point:
+  **Two engine semantics this schema pinned in advance and cycle B's engine now implements**
+  (`machines.fold`; see "What the engine does with a declaration", below). Nothing in the
+  checker evaluates a guard; the engine does, from one fixed answer:
 
   1. A guard is evaluated against the register's value *before* the arriving message is
      folded into it. Otherwise a guard comparing a field against the very register that
@@ -790,3 +790,158 @@ Each entry is a transition, with these fields:
 
 Any field on a transition entry other than `from`, `on`, `by`, `to`, `signal`, `effects` and
 `guard` is rejected by name.
+
+## What the engine does with a declaration
+
+Everything above says what a declaration *is*. This section says what the engine, cycle B,
+does with one. The engine is a library: `machines.fold.fold` walks a trace,
+`machines.engine.verdict(machine, trace)` turns the fold into a verdict, and
+`machines.engine.gate(machine, trace, outbound)` answers whether one outbound message may be
+sent. `bin/machines-check` does not call it. **The engine performs nothing.** It emits a
+verdict, never a message and never an effect; `escalate` in an `effects` list is a word in a
+tuple.
+
+### The fold
+
+The fold reads a channel's recorded trace, message by message, and produces the state, every
+declared register, what each role has spent against the cap, and every guard reading.
+
+- **Guard timing.** A guard is read against its register as it stood *before* the arriving
+  message is folded in (the first of the two semantics pinned under `guard`, above).
+- **Absent field.** A guard whose field is absent from the message is **false**, never an
+  error (the second). The transition does not fire; if nothing else fires the message is
+  refused as `no transition`.
+- **Refusals.** A refused message is a fact about the trace and not the end of the fold. It
+  does not advance the state, feed a register, spend against the cap or move a clock, and the
+  fold carries on. The reasons are `undeclared kind`, `undeclared role`, `field type` (a
+  field carried with the wrong Python type), `duplicate`, `out-of-order`, `no transition` and
+  `ambiguous` (more than one transition fires; none is picked). A world read carried by a
+  refused message is still reported.
+
+### The verdict
+
+A verdict names the state; the `holder` (none in a terminal state); `accepting`; `terminal`;
+`may_send`; `remaining`; `effects`; `order`; `concurrent_with`; every guard reading; every
+world read; the outbound clock; every refusal; and whether the fold was truncated.
+
+- **`legal` answers two different questions.** From `verdict()` it means *this trace is a
+  legal run of this machine*: it is false when the fold refused any message, and `reason`
+  names the first refusal. It is also false when the trace already spent more than a
+  declared cap (a negative `headroom`), and `reason` then names the role and the overspend.
+  The engine does not attribute the overspend to a particular message: which message busted
+  a cap counted per role and per channel is left to a later cycle. From `gate()` it means *may this outbound message be sent now*: a
+  refusal in the history does not by itself refuse an outbound message, though the history is
+  still reported in `refusals`.
+- **`may_send` still lists the folded state's offers when `legal` is false.** They are what
+  the state offers, not a permission; read `legal` first. Each offer names a guard without
+  evaluating it, because no message exists yet.
+- **`effects` is one unclassified tuple.** It carries the effects of the transition the gate
+  would fire, or of the last transition the fold fired. The framework's design promises a
+  `transport` / `agent` split. What classifies a verb is the transport declaration, which is
+  cycle C, so the split waits and `effects` stays one list until it exists.
+
+### `remaining`
+
+`remaining` is `None` if and only if the declaration has no `cap`: an absent cap means *no
+bound*, and no default is invented. Otherwise it carries `limit`, `scope`, `spent` and
+`headroom`, and `spent` and `headroom` each map **every declared role**.
+
+- Under `per: role`, `headroom[role] = limit - spent[role]`.
+- Under `per: channel`, `headroom[role] = limit - sum(spent.values())` **for every role**. The
+  numbers are equal on purpose: there is one budget and each role sees all of what is left.
+  **They must never be summed**; doing so counts the one budget once per role.
+- Headroom can go negative when a trace overspends, and `verdict()` then reports the trace
+  as not a legal run (see `legal`, above). Only a `signal: true` transition spends;
+  a `signal: false` transition is a local move and never counts.
+
+### The clock and the four order values
+
+Each message carries a clock in its envelope. **The clock is per sender; the cap is per
+role.** One sender may act in two roles, and two senders may share a role, so the two counts
+must not be confused.
+
+| Value | Means | Message | Appears as |
+|---|---|---|---|
+| `ok` | Accepted, nothing concurrent | accepted | the `order` field |
+| `duplicate` | Same sender, clock equal to its high-water mark | **refused** | a refusal's `reason` |
+| `out-of-order` | Same sender, clock below its high-water mark; or a clock above `max(seen) + 1`, which claims to follow something unseen (the gap is named in the refusal's detail) | **refused** | a refusal's `reason` |
+| `concurrent` | Another sender's clock is equal or higher | accepted; `concurrent_with` names those senders | the `order` field |
+
+The `order` field of a verdict (and of a fold step) takes only two of these values, `ok` and
+`concurrent`, because a refused message makes no step. `duplicate` and `out-of-order` appear
+only as the `reason` of a refusal.
+
+The engine derives order from the clock alone. `total_order` on a trace and `channel_order`
+on an envelope are validated and carried, and **nothing reads them yet**: a channel that
+gives a total order is treated exactly like one that does not.
+
+The gap rule fires only once a message has been accepted: the first accepted message sets the
+baseline, whatever its clock. Across senders an equal or lower clock is reported and nothing
+more; neither message is refused.
+
+**The clock is not `seq`, and `remaining` is not an ordinal.** The clock orders messages and
+detects duplicates; `remaining` counts against the cap. Under two-party alternation one
+sender's tenth message can carry a clock of about 19, and that is correct. **Never render a
+visible `n of 10` from the clock**: a prose cap that a reader had to obey is exactly how this
+project produced an `11 of 10` finding, and a number built from the clock would be the same
+failure made silent.
+
+### The outbound gate
+
+`gate()` refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
+`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An outbound field of the wrong Python type is refused as
+`not permitted here`. The gate **stamps the outbound clock and discards any clock the caller
+supplied**: a sender cannot choose it. A truncated fold is never legal, and the reason names
+the truncation.
+
+### The fold limit
+
+The engine stops a single fold at 10,000 messages. It is an engine-side defence against a
+trace somebody hands it, **not a bound on a protocol**: there is no schema field for it,
+nothing a publisher fills in, and a protocol is still not required to terminate. A truncated
+fold makes the verdict **illegal**, because a verdict computed from a fold that did not
+finish is not a verdict about the channel. `steps` counts refused messages too, because a
+refused message still cost a fold step.
+
+### What the engine does not check
+
+The framework does not check meaning, and no part of it may appear to. The engine is the first
+part of this plugin that runs a protocol, so it is the first part a reader could mistake for
+something that verifies what a conversation means. It does not.
+
+1. **Content.** The engine reads the kinds, the roles and the declared fields a declaration
+   names, and the envelope. There is no slot in a trace for a message body: that is not a
+   rule the engine follows but a shape it cannot express. Whether a draft states a new fact,
+   whether a sender set a flag honestly, whether an answer answers the question: none of it is
+   visible here, and nothing in this plugin will ever report on it.
+2. **Meaning, including `accepting`.** Nothing here can confirm that a state a publisher
+   marked accepting really is a fine place for a run to stop. The engine reports `accepting`
+   because the declaration says so, and that is the whole of its warrant.
+3. **Agreement.** A machine that declares anything consensus-shaped, `paxos-acceptor` among
+   them, gets its sequencing and its declared invariant checked and **nothing about
+   agreement**. The engine folds one acceptor's own register; it cannot see the others, and no
+   field in this schema could name them. `valid-paxos-acceptor.md` says this in its own prose,
+   as the requirement under `guard` asks.
+4. **Whether a guard will fire.** `may_send` names a guarded offer without evaluating it,
+   because no message exists yet. The checker additionally cannot tell you that a guard never
+   fires at all, and the engine does not make up the difference.
+5. **Whether the transport told the truth.** A buggy or hostile transport can misreport which
+   messages exist: it can leave one out, or add one nobody sent. **Leaving messages out does
+   change the folded state, and a trace with messages missing can let a role past a cap it
+   would otherwise have hit.** What holds is narrower, and it is about the trace and not
+   about the conversation: given the message list it was handed, the engine is what folds,
+   counts and decides, so a transport cannot make it accept a transition the declaration does
+   not have, exceed the cap the declaration sets, or report a state the declaration does not
+   define. What a transport *can* do is change which trace the engine sees, and every
+   guarantee here ends at that trace. A trace is only as honest as whoever produced it.
+6. **Anything outside the channel.** The engine carries a world read into the verdict and
+   **never branches on it**. That is pinned by a test rather than a comment: the same trace
+   with wildly different world-read payloads must give an identical verdict. A world read
+   reaches a conversation only as a message somebody wrote into the channel.
+7. **The clock is not `seq`, and `remaining` is not an ordinal.** See "The clock and the four
+   order values", above.
+8. **Whether a declaration is unambiguous.** A known gap, measured: `check_machine` passes two
+   transitions that share all four of `from`, `on`, `by` and `to` and differ only in
+   `effects`. The engine refuses a message that fires both as `ambiguous` rather than
+   guessing, so a machine that looks well-formed can provoke that refusal. The checker defect
+   is filed as `claude-plugins#51`.
