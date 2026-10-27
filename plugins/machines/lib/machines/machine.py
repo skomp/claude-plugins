@@ -543,10 +543,18 @@ def check_machine(m):
     # message). A nondeterministic declaration therefore cannot be run at
     # all, and nothing else here says so -- every other check passes on it.
     #
-    # The rule, in the order it is checked, for each group whose distinct
-    # `to` values number more than one (a group with only one is a
-    # duplicate, not an ambiguity, and is skipped entirely, same as
-    # before):
+    # The rule, in the order it is checked, for each group of more than one
+    # transition, whether or not its members agree on `to`. Agreeing on `to`
+    # is no defence: two members that fire on one message both require
+    # their `effects`, and nothing declared picks between them. The engine
+    # refuses such a message at run time as "ambiguous" (engine.py, fold.py),
+    # and that is the same defect found late; a group of one is the only
+    # group skipped. A member that repeats another word for word -- same
+    # `to`, `signal`, `effects` and guard -- is the one redundancy that is
+    # still allowed: it is collapsed into the first before the group is
+    # judged, because it adds no choice the declaration did not already
+    # make. (The engine, which cannot tell a repeat from a rival, still
+    # refuses a message that both match; see the report on this rule.)
     #
     #   1. Any member with no guard -- an unguarded transition always
     #      fires, so it overlaps everything else in the group. Reported.
@@ -561,6 +569,7 @@ def check_machine(m):
     #      pairwise across the *whole* group, including two members that
     #      happen to agree on `to`: they may still disagree on `effects`,
     #      and the verdict has no way to know which set was required.
+    #      This is why the group is not skipped when `to` is shared.
     #   4. Otherwise: the guards partition the comparison's outcomes, so
     #      exactly one member fires for any value the field and register
     #      can produce. Not reported.
@@ -577,14 +586,28 @@ def check_machine(m):
     for t in m.transitions:
         groups.setdefault((t.frm, t.on, t.by), []).append(t)
     for trigger in sorted(groups):
-        members = groups[trigger]
+        members = []
+        seen = set()
+        for t in groups[trigger]:
+            key = (t.to, t.signal, tuple(t.effects),
+                   None if t.guard is None
+                   else (t.guard.field, t.guard.op, t.guard.register))
+            if key not in seen:
+                seen.add(key)
+                members.append(t)
         targets = set(t.to for t in members)
-        if len(targets) <= 1:
+        if len(members) <= 1:
             continue
+        if len(targets) > 1:
+            lead = "they lead to %s" % (
+                ", ".join(repr(x) for x in sorted(targets)),)
+        else:
+            lead = ("they all lead to %r, but each requires its own "
+                    "effects and nothing picks between them" % (
+                        sorted(targets)[0],))
         problem = (
-            "transitions from %r on %r by %r are nondeterministic: they "
-            "lead to %s" % (trigger[0], trigger[1], trigger[2],
-                            ", ".join(repr(x) for x in sorted(targets))))
+            "transitions from %r on %r by %r are nondeterministic: %s" % (
+                trigger[0], trigger[1], trigger[2], lead))
         if any(t.guard is None for t in members):                      # 1
             problems.append(problem)
             continue

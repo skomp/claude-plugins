@@ -6,6 +6,29 @@ from machines.machine import (Machine, State, Transition, check_machine,
 from tests.test_declaration import VALID  # the known-good declaration
 from tests.test_guards import GUARDED  # the known-good guarded declaration
 
+DECLARED_SHARED = """\
+```machine
+machine: shared
+version: v1
+prefix: "shared:v1 "
+roles:
+  r: session
+kinds: [x]
+fields:
+  n: int
+registers:
+  hi: { fold: max, field: n, on: [x], initial: 0 }
+initial: a
+states:
+  - { name: a, holder: r }
+  - { name: b, terminal: true, accepting: true }
+transitions:
+  - %s
+  - %s
+```
+"""
+
+
 def mutate(old, new):
     # Assert the splice landed. A `str.replace` whose `old` no longer
     # occurs in VALID returns VALID unchanged, so the test would go on
@@ -198,11 +221,17 @@ class TestChecksNoTaskOwned(unittest.TestCase):
                             for p in problems), problems)
 
     def test_two_transitions_with_one_trigger_and_one_target_are_not_reported(self):
-        # A duplicate transition is redundant, not ambiguous: the fold
-        # still has one result. Only a *divergent* target is a problem.
+        # A word-for-word repeat of a transition is redundant, not
+        # ambiguous: it adds no choice the declaration did not make. A
+        # repeat that differs in `signal`, `effects` or guard is a rival,
+        # and is reported (TestSharedTargetIsStillAChoice).
         m = parse(VALID)
-        m.transitions.append(type(m.transitions[0])(
-            "awaiting-triage", "question", "responder", "awaiting-answer"))
+        first = [t for t in m.transitions
+                 if (t.frm, t.on, t.by) == ("awaiting-triage", "question",
+                                            "responder")][0]
+        m.transitions.append(type(first)(
+            first.frm, first.on, first.by, first.to, signal=first.signal,
+            effects=first.effects, guard=first.guard))
         self.assertEqual(
             [p for p in check_machine(m) if "nondeterministic" in p], [])
 
@@ -313,6 +342,50 @@ class TestChecksNoTaskOwned(unittest.TestCase):
                    "kinds: [triage, question, answer, conclusion, stalemate, shouting]")
         problems = check_machine(m)
         self.assertTrue(any("'shouting'" in p for p in problems), problems)
+
+
+class TestSharedTargetIsStillAChoice(unittest.TestCase):
+    """claude-plugins#51: two transitions on one trigger that agree on `to`
+    were skipped by the determinism check, though each requires its own
+    effects and nothing picks between them."""
+
+    def test_same_target_different_effects_is_reported(self):
+        m = parse(DECLARED_SHARED % (
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:two"] }'))
+        problems = [p for p in check_machine(m) if "nondeterministic" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'a'", problems[0])
+        self.assertIn("all lead to 'b'", problems[0])
+
+    def test_same_target_overlapping_guards_is_reported(self):
+        m = parse(DECLARED_SHARED % (
+            '{ from: a, on: x, by: r, to: b, guard: { field: n, op: ge, register: hi } }',
+            '{ from: a, on: x, by: r, to: b, guard: { field: n, op: le, register: hi } }'))
+        problems = [p for p in check_machine(m) if "nondeterministic" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("overlap", problems[0])
+
+    def test_same_target_disjoint_guards_is_accepted(self):
+        m = parse(DECLARED_SHARED % (
+            '{ from: a, on: x, by: r, to: b, guard: { field: n, op: gt, register: hi } }',
+            '{ from: a, on: x, by: r, to: b, guard: { field: n, op: le, register: hi } }'))
+        self.assertEqual(
+            [p for p in check_machine(m) if "nondeterministic" in p], [])
+
+    def test_same_target_differing_only_in_signal_is_reported(self):
+        m = parse(DECLARED_SHARED % (
+            '{ from: a, on: x, by: r, to: b, signal: true }',
+            '{ from: a, on: x, by: r, to: b, signal: false }'))
+        self.assertEqual(
+            len([p for p in check_machine(m) if "nondeterministic" in p]), 1)
+
+    def test_a_word_for_word_repeat_stays_legal(self):
+        m = parse(DECLARED_SHARED % (
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }'))
+        self.assertEqual(
+            [p for p in check_machine(m) if "nondeterministic" in p], [])
 
 
 class TestAcceptingStates(unittest.TestCase):

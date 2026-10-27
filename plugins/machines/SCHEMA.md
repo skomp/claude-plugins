@@ -707,6 +707,14 @@ Each entry is a transition, with these fields:
   that accepts a high ballot and does nothing at all with a low one — is legal, because an
   incomplete guard set fires no transition for the outcomes it omits, which is the same
   legal outcome as an illegal message, already reported elsewhere.
+
+  Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
+  are held to the same rule: each requires its own `effects` (and its own `signal`), and
+  when both fire nothing declared picks between them, so they are reported unless their
+  guards prove them disjoint. The one exception is a transition that repeats an earlier one
+  word for word — same `to`, `signal`, `effects` and guard. It adds no choice, so it is
+  accepted. (The engine cannot tell a repeat from a rival and refuses a message that
+  matches both as `ambiguous`; delete the repeat.)
 - **`signal`** (boolean, optional, default: `false`) — whether firing this transition emits a
   signal to a peer, as opposed to a purely local move. If present, must be an actual boolean;
   see "Scalars mean what you wrote" above — `signal: yes` is rejected, not silently accepted
@@ -940,8 +948,8 @@ something that verifies what a conversation means. It does not.
    reaches a conversation only as a message somebody wrote into the channel.
 7. **The clock is not `seq`, and `remaining` is not an ordinal.** See "The clock and the four
    order values", above.
-8. **Whether a declaration is unambiguous.** A known gap, measured: `check_machine` passes two
-   transitions that share all four of `from`, `on`, `by` and `to` and differ only in
-   `effects`. The engine refuses a message that fires both as `ambiguous` rather than
-   guessing, so a machine that looks well-formed can provoke that refusal. The checker defect
-   is filed as `claude-plugins#51`.
+8. **Whether a declaration is unambiguous.** `check_machine` reports two transitions that
+   share `from`, `on` and `by` unless their guards prove them disjoint, whether or not they
+   agree on `to` (see the `to` bullet, above). It cannot prove the *messages* unambiguous:
+   a hand-built `Machine` skips the parser, and the engine still refuses a message that fires
+   more than one transition as `ambiguous` rather than guessing.

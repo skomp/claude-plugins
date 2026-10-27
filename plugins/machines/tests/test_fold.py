@@ -180,7 +180,9 @@ class OtherRefusals(unittest.TestCase):
                        effects=["label.add:one"]),
             Transition("a", "step", "r", "b", signal=True,
                        effects=["label.add:two"])])
-        self.assertEqual(check_machine(m), [])  # the checker passes it
+        # The checker now reports this shape (claude-plugins#51); a
+        # hand-built Machine still reaches the fold, which is the backstop.
+        self.assertTrue(any("nondeterministic" in p for p in check_machine(m)))
         f = fold(m, _trace([_msg("step", "r", "s", 1)]))
         self.assertEqual([r.reason for r in f.refusals], ["ambiguous"])
         self.assertEqual(f.state, "a")
