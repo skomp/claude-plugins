@@ -709,9 +709,9 @@ Each entry is a transition, with these fields:
   legal outcome as an illegal message, already reported elsewhere.
 
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
-  are held to the same rule: each requires its own `effects` (and its own `signal`), and
-  when both fire nothing declared picks between them, so they are reported unless their
-  guards prove them disjoint. A transition that repeats an earlier one word for word — same
+  are held to the same rule. More than one can fire on one trigger and nothing declared
+  says which, whether or not `effects` are involved (each may, for example, require its own
+  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — same
   `to`, `signal`, `effects` and guard — is reported too, as declared twice. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
   message that matches both as `ambiguous`, so a machine that passed with a repeat would have
   a step it can never take. Delete the repeat.

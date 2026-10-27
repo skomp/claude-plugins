@@ -535,10 +535,11 @@ def check_machine(m):
             problems.append("terminal state %r has an outgoing transition" % t.frm)
 
     # Determinism, with a guarded branch as the one legitimate exception.
-    # Two transitions sharing (frm, on, by) with different `to` states
-    # leave the machine with a choice no declaration resolves, unless a
-    # guard on every one of them proves the choice is never actually
-    # offered. The engine is specified as a fold over the message trace,
+    # Two transitions sharing (frm, on, by) leave the machine with a choice
+    # no declaration resolves -- whether they lead to different `to` states
+    # or to one, since they may still differ in `effects` or `signal` --
+    # unless a guard on every one of them proves the choice is never
+    # actually offered. The engine is specified as a fold over the message trace,
     # and a fold is a function: it has exactly one result per (state,
     # message). A nondeterministic declaration therefore cannot be run at
     # all, and nothing else here says so -- every other check passes on it.
@@ -608,8 +609,9 @@ def check_machine(m):
             lead = "they lead to %s" % (
                 ", ".join(repr(x) for x in sorted(targets)),)
         else:
-            lead = ("they all lead to %r, but each requires its own "
-                    "effects and nothing picks between them" % (
+            lead = ("they all lead to %r, but more than one can fire on "
+                    "this trigger and nothing declared says which (for "
+                    "example, each may require its own effects)" % (
                         sorted(targets)[0],))
         problem = (
             "transitions from %r on %r by %r are nondeterministic: %s" % (

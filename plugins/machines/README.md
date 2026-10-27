@@ -87,9 +87,12 @@ only in `SCHEMA.md`, which has it in full.
    never branches on it.
 7. **The clock is not `seq`, and `remaining` is not an ordinal.** One sender's tenth message
    can carry a clock of about 19. Never render a visible `n of 10` from the clock.
-8. **Whether a declaration is unambiguous.** `check_machine` passes two transitions that
-   share `from`, `on`, `by` and `to` and differ only in `effects`; the engine refuses a
-   message that matches both as `ambiguous`. A known gap, filed as `claude-plugins#51`.
+8. **Whether a declaration is unambiguous.** `check_machine` reports two transitions that
+   share `from`, `on` and `by` unless their guards prove them disjoint, whether or not they
+   agree on `to` (so two that differ only in `effects` are reported), and it reports a
+   transition declared twice. It cannot vouch for a machine built in code rather than
+   parsed: the engine still refuses a message that matches more than one transition as
+   `ambiguous`, as the backstop.
 
 ## The declaration
 

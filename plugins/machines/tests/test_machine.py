@@ -382,8 +382,12 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
         m = parse(DECLARED_SHARED % (
             '{ from: a, on: x, by: r, to: b, signal: true }',
             '{ from: a, on: x, by: r, to: b, signal: false }'))
-        self.assertEqual(
-            len([p for p in check_machine(m) if "nondeterministic" in p]), 1)
+        problems = [p for p in check_machine(m) if "nondeterministic" in p]
+        self.assertEqual(len(problems), 1)
+        # Neither transition declares any effects, so the message must not
+        # claim that they do.
+        self.assertNotIn("requires its own", problems[0])
+        self.assertIn("nothing declared says which", problems[0])
 
     def test_a_word_for_word_repeat_is_reported_once_as_declared_twice(self):
         m = parse(DECLARED_SHARED % (
