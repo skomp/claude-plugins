@@ -62,9 +62,9 @@ class FixtureFolds(unittest.TestCase):
              (3, "awaiting-triage", "concluded",
               "awaiting-triage", "conclusion", "responder", "concluded")])
         self.assertEqual(f.fired[0].transition.effects,
-                         ["label.add:session-relay:open"])
+                         [Effect("label.add", {"name": "session-relay:open"})])
         self.assertEqual(f.fired[3].transition.effects,
-                         ["label.remove:session-relay:open"])
+                         [Effect("label.remove", {"name": "session-relay:open"})])
 
     def test_the_paxos_fixture_folds_to_decided_and_remembers_the_ballot(self):
         m = _paxos()

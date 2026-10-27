@@ -60,7 +60,7 @@ class FixtureVerdicts(unittest.TestCase):
     def test_the_verdict_carries_the_effects_of_the_transition_that_fired(self):
         v = verdict(SESSION_RELAY,
                     load_trace(FIXTURES / "trace-session-relay.json"))
-        self.assertEqual(v.effects, ("label.remove:session-relay:open",))
+        self.assertEqual(v.effects, (Effect("label.remove", {"name": "session-relay:open"}),))
 
 
 class EmptyTrace(unittest.TestCase):
@@ -161,7 +161,7 @@ class Effects(unittest.TestCase):
             self):
         v = verdict(_machine(None), _trace([_msg("step", "r", "x", 1)]))
         self.assertEqual((v.state, v.terminal, v.holder), ("b", True, None))
-        self.assertEqual(v.effects, ("escalate",))
+        self.assertEqual(v.effects, (Effect("escalate", {}),))
         self.assertEqual(v.may_send, ())
         self.assertIsInstance(v, Verdict)
 
@@ -348,7 +348,7 @@ class Gate(unittest.TestCase):
             self):
         v = gate(SESSION_RELAY, _trace([]),
                  _out("triage", "initiator", "repo-a"))
-        self.assertEqual(v.effects, ("label.add:session-relay:open",))
+        self.assertEqual(v.effects, (Effect("label.add", {"name": "session-relay:open"}),))
 
 
 if __name__ == "__main__":
