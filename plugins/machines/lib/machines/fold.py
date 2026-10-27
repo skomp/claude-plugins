@@ -49,9 +49,13 @@ MAX_FOLD_STEPS = 10000
 
 _PYTHON_TYPE = {"int": int, "bool": bool}
 
-# SPEC section 6's four order values, exactly. A clock above max(seen) + 1 is
-# reported as "out-of-order" with the gap named in the refusal's detail: the
-# author kept four values rather than add a fifth.
+# SPEC section 6's four order values, exactly, as one vocabulary. Where each
+# one actually appears: "ok" and "concurrent" are the only values a `Step`
+# (and so `Verdict.order`) ever holds, because a refused message makes no
+# Step. "duplicate" and "out-of-order" appear only as a `Refusal.reason`. A
+# clock above max(seen) + 1 is reported as "out-of-order" with the gap named
+# in the refusal's detail: the author kept four values rather than add a
+# fifth. No production code reads this tuple; it documents the vocabulary.
 ORDERS = ("ok", "duplicate", "out-of-order", "concurrent")
 
 
@@ -150,7 +154,7 @@ def _wrong_type(m, fields):
     return None
 
 
-def _read_guard(m, index, t, msg, registers):
+def _read_guard(index, t, msg, registers):
     g = t.guard
     tid = transition_id(t)
     value = msg.fields.get(g.field)
@@ -214,7 +218,6 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
         sender = msg.envelope.sender
         clock = msg.envelope.clock
         order = "ok"
-        concurrent_with = ()
         if sender in clocks and clock <= clocks[sender]:
             if clock == clocks[sender]:
                 refuse("duplicate", "clock %d from %r repeats its high-water "
@@ -245,7 +248,7 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
             if t.guard is None:
                 firing.append(t)
                 continue
-            reading = _read_guard(m, index, t, msg, registers)
+            reading = _read_guard(index, t, msg, registers)
             guards.append(reading)
             if reading.fired:
                 firing.append(t)

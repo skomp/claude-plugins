@@ -127,12 +127,38 @@ def _truncated_reason(f):
             "given" % (f.steps,))
 
 
+def _overspend_reason(m, f):
+    """A reason when the fold already spent more than the declared cap, else
+    None. The fold has no cap rule, so a trace past the cap folds cleanly;
+    this is the check that stops `verdict` calling it a legal run. It does
+    not say WHICH message overspent: who busted a cap counted per role and
+    per channel is a design question left to a later cycle."""
+    remaining = _remaining(m, f.spent)
+    if remaining is None:
+        return None
+    for role in m.roles:
+        room = remaining.headroom[role]
+        if room < 0:
+            if remaining.scope == "role":
+                return ("cap exceeded: role %r spent %d of a cap of %d "
+                        "(%d over)" % (role, remaining.spent[role],
+                                       remaining.limit, -room))
+            return ("cap exceeded: the channel's roles spent %d of a shared "
+                    "cap of %d (%d over; seen from role %r)" % (
+                        sum(remaining.spent.values()), remaining.limit,
+                        -room, role))
+    return None
+
+
 def verdict(m, trace, limit=MAX_FOLD_STEPS):
     f = fold(m, trace, limit)
     if f.truncated:
         return _build(m, f, False, _truncated_reason(f))
     if f.refusals:
         return _build(m, f, False, _refusal_reason(f.refusals))
+    over = _overspend_reason(m, f)
+    if over is not None:
+        return _build(m, f, False, over)
     return _build(m, f, True, None)
 
 
@@ -151,10 +177,15 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     choose it. Nothing is performed: `effects` names what the transition
     that would fire requires, and is () on a refusal.
 
-    A truncated fold (the trace outran the engine's limit) is never legal:
-    the reason names the truncation and `truncated` is true.
+    `outbound.world_reads` is dropped: the gate answers from the channel's
+    recorded state and the outbound fields alone, and never reads, carries or
+    branches on a world read of the outbound message. The world reads of the
+    trace's own messages are kept in the verdict, as `verdict` keeps them.
 
-    Refusals, in this order: "terminal state"; "not permitted here" (nothing
+    There are five refusal reasons. In the order they are checked:
+    the truncation refusal (the trace outran the engine's limit; the reason
+    names the truncation, `truncated` is true, and nothing is judged against
+    the partial state); "terminal state"; "not permitted here" (nothing
     fires on (kind, by) under the guards and these fields, including a field
     carried with the wrong type); "ambiguous" (more than one fires, as in
     the fold: none is picked); "cap exhausted" (headroom <= 0 and the
@@ -178,7 +209,7 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
         if t.guard is None:
             firing.append(t)
             continue
-        reading = _read_guard(m, index, t, outbound, f.registers)
+        reading = _read_guard(index, t, outbound, f.registers)
         readings.append(reading)
         if reading.fired:
             firing.append(t)

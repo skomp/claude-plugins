@@ -340,6 +340,85 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class OverspentTrace(unittest.TestCase):
+    """The fold has no cap rule, so a trace past the cap folds without a
+    refusal. `verdict` must still not call it a legal run."""
+
+    def test_a_trace_past_a_per_role_cap_is_not_a_legal_run(self):
+        m = _loop(3, "role")
+        v = verdict(m, _trace(_spend("r", "x", 7)))
+        self.assertEqual(v.refusals, ())
+        self.assertEqual(v.remaining.headroom, {"r": -4, "s": 3})
+        self.assertFalse(v.legal)
+        self.assertIn("'r'", v.reason)
+        self.assertIn("7 of a cap of 3", v.reason)
+        self.assertIn("4 over", v.reason)
+
+    def test_a_trace_past_a_shared_cap_is_not_a_legal_run(self):
+        m = _loop(3, "channel", roles=("r", "s"))
+        v = verdict(m, _trace(_spend("r", "x", 5)))
+        self.assertFalse(v.legal)
+        self.assertIn("5 of a shared cap of 3", v.reason)
+        self.assertIn("2 over", v.reason)
+
+    def test_a_trace_exactly_at_its_cap_is_still_legal(self):
+        v = verdict(_loop(3, "role"), _trace(_spend("r", "x", 3)))
+        self.assertEqual((v.legal, v.reason), (True, None))
+        self.assertEqual(v.remaining.headroom["r"], 0)
+
+    def test_the_gate_still_says_cap_exhausted_at_zero_and_below(self):
+        m = _loop(3, "role")
+        for n in (3, 7):
+            v = gate(m, _trace(_spend("r", "x", n)), _out("step", "r", "x"))
+            self.assertEqual((v.legal, v.reason), (False, "cap exhausted"))
+        two = gate(m, _trace(_spend("r", "x", 2)), _out("step", "r", "x"))
+        self.assertTrue(two.legal)
+
+
+class GateWorldReads(unittest.TestCase):
+    def _trace_with(self, reads):
+        from machines.envelope import WorldRead
+        rs = [WorldRead(v, r) for v, r in reads]
+        return _trace([Message("step", "r", Envelope(i + 1, "x"), None, rs)
+                       for i in range(2)])
+
+    def test_the_gate_is_identical_however_a_world_read_turned_out(self):
+        m = _loop(10, "role")
+        a = gate(m, self._trace_with([("db", {"rows": 3})]),
+                 _out("step", "r", "x"))
+        b = gate(m, self._trace_with([("db", {"rows": 99999, "z": [1]})]),
+                 _out("step", "r", "x"))
+        for name in ("legal", "reason", "state", "holder", "accepting",
+                     "terminal", "may_send", "order", "concurrent_with",
+                     "outbound_clock", "truncated", "refusals", "effects",
+                     "guards"):
+            self.assertEqual(vars_of(getattr(a, name)),
+                             vars_of(getattr(b, name)), name)
+        self.assertEqual(vars_of(a.remaining), vars_of(b.remaining))
+        self.assertTrue(a.legal)
+        self.assertNotEqual([w.result for w in a.world_reads],
+                            [w.result for w in b.world_reads])
+
+    def test_the_gate_drops_the_outbound_messages_own_world_reads(self):
+        from machines.envelope import WorldRead
+        m = _loop(10, "role")
+        out = Message("step", "r", Envelope(None, "x"), None,
+                      [WorldRead("db", {"rows": 3})])
+        v = gate(m, self._trace_with([]), out)
+        self.assertTrue(v.legal)
+        self.assertEqual(v.world_reads, ())
+
+
+def vars_of(value):
+    if isinstance(value, (list, tuple)):
+        return tuple(vars_of(v) for v in value)
+    if isinstance(value, dict):
+        return tuple(sorted((k, vars_of(v)) for k, v in value.items()))
+    if hasattr(value, "__dict__"):
+        return tuple(sorted((k, vars_of(v)) for k, v in vars(value).items()))
+    return value
+
+
 class TruncatedFold(unittest.TestCase):
     def test_a_truncated_fold_is_reported_and_is_not_legal(self):
         v = verdict(_loop(None, "channel"), _trace(_spend("r", "x", 50)),

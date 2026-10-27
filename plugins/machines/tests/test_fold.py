@@ -81,6 +81,14 @@ class FixtureFolds(unittest.TestCase):
     def test_the_limit_constant_exists(self):
         self.assertIsInstance(MAX_FOLD_STEPS, int)
 
+    def test_the_documents_state_the_limit_the_constant_holds(self):
+        """SCHEMA.md and README.md quote the fold limit; they cannot drift."""
+        self.assertEqual(MAX_FOLD_STEPS, 10000)
+        root = Path(__file__).parent.parent
+        for name in ("SCHEMA.md", "README.md"):
+            self.assertIn("{:,} messages".format(MAX_FOLD_STEPS),
+                          (root / name).read_text(), name)
+
 
 class Ordering(unittest.TestCase):
     def test_a_guard_reads_the_register_before_the_arriving_message_is_folded_in(self):
@@ -240,6 +248,17 @@ class Bookkeeping(unittest.TestCase):
                                         [WorldRead("gh", {"x": [1]})])]))
         self.assertEqual([(w.index, w.verb, w.result) for w in f.world_reads],
                          [(0, "gh", {"x": [1]})])
+
+    def test_a_world_read_on_a_refused_message_is_kept(self):
+        from machines.envelope import WorldRead
+        f = fold(_paxos(), _trace([
+            _msg("no-such-kind", "proposer", "p1", 1, {},
+                 [WorldRead("gh", {"x": 1})]),
+            _msg("prepare", "proposer", "p1", 1, {"ballot": 1},
+                 [WorldRead("db", {"y": 2})])]))
+        self.assertEqual([r.reason for r in f.refusals], ["undeclared kind"])
+        self.assertEqual([(w.index, w.verb) for w in f.world_reads],
+                         [(0, "gh"), (1, "db")])
 
 
 WORLD = [{"verb": "db.query", "result": {"rows": 3, "status": "green"}}]
