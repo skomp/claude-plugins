@@ -132,7 +132,12 @@ def _atom(a, b):
     return "LT" if a < b else ("EQ" if a == b else "GT")
 
 
-def _wrong_type(m, fields):
+# `wrong_type` and `read_guard` are the shared guard evaluation. The inbound
+# path (`fold`, here) and the outbound path (`engine.gate`) both call them,
+# so a message is judged the same way whichever direction it travels; a
+# third caller must call these rather than re-implement either.
+
+def wrong_type(m, fields):
     """The first declared field carried with the wrong Python type, or None.
     `bool` is an `int` in Python, so it is refused against `int` explicitly:
     `True < 5` succeeds and would be a silent wrong comparison."""
@@ -154,7 +159,7 @@ def _wrong_type(m, fields):
     return None
 
 
-def _read_guard(index, t, msg, registers):
+def read_guard(index, t, msg, registers):
     g = t.guard
     tid = transition_id(t)
     value = msg.fields.get(g.field)
@@ -207,7 +212,7 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
         if msg.by not in m.roles:
             refuse("undeclared role", "role %r" % (msg.by,))
             continue
-        wrong = _wrong_type(m, msg.fields)
+        wrong = wrong_type(m, msg.fields)
         if wrong is not None:
             refuse("field type", wrong)
             continue
@@ -248,7 +253,7 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
             if t.guard is None:
                 firing.append(t)
                 continue
-            reading = _read_guard(index, t, msg, registers)
+            reading = read_guard(index, t, msg, registers)
             guards.append(reading)
             if reading.fired:
                 firing.append(t)

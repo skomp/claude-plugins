@@ -10,7 +10,7 @@ outbound clock is `Fold.outbound_clock`, read, never recomputed.
 this") can reuse it rather than inline a second copy.
 """
 
-from machines.fold import MAX_FOLD_STEPS, _read_guard, _wrong_type, fold
+from machines.fold import MAX_FOLD_STEPS, read_guard, wrong_type, fold
 
 
 class Offer(object):
@@ -199,7 +199,7 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     if m.states[f.state].terminal:
         return _build(m, f, False, "terminal state", ())
     if (outbound.kind not in m.kinds or outbound.by not in m.roles
-            or _wrong_type(m, outbound.fields) is not None):
+            or wrong_type(m, outbound.fields) is not None):
         return _build(m, f, False, "not permitted here", ())
     index = len(trace.messages)
     firing, readings = [], []
@@ -209,7 +209,7 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
         if t.guard is None:
             firing.append(t)
             continue
-        reading = _read_guard(index, t, outbound, f.registers)
+        reading = read_guard(index, t, outbound, f.registers)
         readings.append(reading)
         if reading.fired:
             firing.append(t)
