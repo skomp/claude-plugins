@@ -229,6 +229,22 @@ class TestCheckMachine(unittest.TestCase):
         self.assertEqual(sorted(machine_module.BUILTIN_VERBS),
                          ["escalate", "label.add", "label.remove"])
 
+    def test_every_builtin_type_word_is_one_the_checker_can_test(self):
+        for verb, declared in machine_module.BUILTIN_VERBS.items():
+            for name, word in declared.items():
+                self.assertIn(word, machine_module.ARG_TYPES,
+                              "%s.%s declares %r" % (verb, name, word))
+
+    def test_every_builtin_verb_name_matches_verb(self):
+        for verb in machine_module.BUILTIN_VERBS:
+            self.assertRegex(verb, machine_module.VERB)
+
+    def test_every_arg_type_word_has_a_test_and_names_a_value(self):
+        samples = {"string": "x", "int": 1, "bool": True}
+        self.assertEqual(sorted(machine_module.ARG_TYPES), sorted(samples))
+        for word in machine_module.ARG_TYPES:
+            self.assertEqual(machine_module._arg_type(samples[word]), word)
+
     def _with_verb(self, declared, args):
         """No built-in verb takes an int or a bool, so declare one here.
 

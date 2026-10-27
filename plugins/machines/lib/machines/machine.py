@@ -435,15 +435,25 @@ BUILTIN_VERBS = {
 }
 
 
+# One test per word in ARG_TYPES, keyed by that word. Exact types, so the
+# order of ARG_TYPES does not matter: `isinstance(True, int)` is True, and
+# `type(True) is int` is not.
+_ARG_TYPE_TESTS = {
+    "string": lambda v: type(v) is str,
+    "int": lambda v: type(v) is int,
+    "bool": lambda v: type(v) is bool,
+}
+
+
 def _arg_type(value):
-    # `bool` first: `isinstance(True, int)` is True, so testing `int`
-    # first would accept a bool wherever an int is declared.
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, str):
-        return "string"
+    """The ARG_TYPES word `value` is, or its Python type name if none.
+
+    Reads ARG_TYPES, not a list of its own: a word added there with no
+    test in `_ARG_TYPE_TESTS` raises KeyError here, and a test pins it.
+    """
+    for word in ARG_TYPES:
+        if _ARG_TYPE_TESTS[word](value):
+            return word
     return type(value).__name__
 
 
