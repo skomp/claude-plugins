@@ -711,10 +711,10 @@ Each entry is a transition, with these fields:
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
   are held to the same rule: each requires its own `effects` (and its own `signal`), and
   when both fire nothing declared picks between them, so they are reported unless their
-  guards prove them disjoint. The one exception is a transition that repeats an earlier one
-  word for word — same `to`, `signal`, `effects` and guard. It adds no choice, so it is
-  accepted. (The engine cannot tell a repeat from a rival and refuses a message that
-  matches both as `ambiguous`; delete the repeat.)
+  guards prove them disjoint. A transition that repeats an earlier one word for word — same
+  `to`, `signal`, `effects` and guard — is reported too, as declared twice. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
+  message that matches both as `ambiguous`, so a machine that passed with a repeat would have
+  a step it can never take. Delete the repeat.
 - **`signal`** (boolean, optional, default: `false`) — whether firing this transition emits a
   signal to a peer, as opposed to a purely local move. If present, must be an actual boolean;
   see "Scalars mean what you wrote" above — `signal: yes` is rejected, not silently accepted

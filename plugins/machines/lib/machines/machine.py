@@ -543,18 +543,20 @@ def check_machine(m):
     # message). A nondeterministic declaration therefore cannot be run at
     # all, and nothing else here says so -- every other check passes on it.
     #
-    # The rule, in the order it is checked, for each group of more than one
-    # transition, whether or not its members agree on `to`. Agreeing on `to`
+    # The rule applies to each group of more than one transition, whether or not its members agree on `to`. Agreeing on `to`
     # is no defence: two members that fire on one message both require
     # their `effects`, and nothing declared picks between them. The engine
     # refuses such a message at run time as "ambiguous" (engine.py, fold.py),
     # and that is the same defect found late; a group of one is the only
     # group skipped. A member that repeats another word for word -- same
-    # `to`, `signal`, `effects` and guard -- is the one redundancy that is
-    # still allowed: it is collapsed into the first before the group is
-    # judged, because it adds no choice the declaration did not already
-    # make. (The engine, which cannot tell a repeat from a rival, still
-    # refuses a message that both match; see the report on this rule.)
+    # `to`, `signal`, `effects` and guard -- is reported as declared twice,
+    # and is then left out of the rest of the group's judgement so that it
+    # is not also reported as its own rival. The engine cannot tell a
+    # repeat from a rival and refuses a message that matches both as
+    # "ambiguous", so a checker that passed a repeat would call well-formed
+    # a machine with a step it can never take.
+    #
+    # The rule, in the order it is checked:
     #
     #   1. Any member with no guard -- an unguarded transition always
     #      fires, so it overlaps everything else in the group. Reported.
@@ -592,9 +594,13 @@ def check_machine(m):
             key = (t.to, t.signal, tuple(t.effects),
                    None if t.guard is None
                    else (t.guard.field, t.guard.op, t.guard.register))
-            if key not in seen:
-                seen.add(key)
-                members.append(t)
+            if key in seen:
+                problems.append(
+                    "transition from %r on %r by %r to %r is declared "
+                    "twice; delete one" % (t.frm, t.on, t.by, t.to))
+                continue
+            seen.add(key)
+            members.append(t)
         targets = set(t.to for t in members)
         if len(members) <= 1:
             continue

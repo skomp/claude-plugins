@@ -8,7 +8,7 @@ from machines.declaration import parse
 from machines.engine import Offer, Remaining, Verdict, gate, verdict
 from machines.envelope import Envelope, Message, Trace, load_trace
 from machines.machine import (Field, Guard, Machine, Register, State,
-                              Transition)
+                              Transition, check_machine)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SESSION_RELAY = parse((FIXTURES / "valid-session-relay.md").read_text())
@@ -290,6 +290,21 @@ class Gate(unittest.TestCase):
         v = gate(m, _trace([]), _out("step", "r", "x"))
         self.assertEqual((v.legal, v.reason), (False, "ambiguous"))
         self.assertEqual(v.effects, ())
+
+    def test_the_ambiguous_refusal_is_a_backstop_for_a_hand_built_machine(
+            self):
+        # The checker reports a transition declared twice, so a declaration
+        # that `parse` accepted can never reach this refusal; it stays for a
+        # hand-built `Machine`, which skips the parser. Do not delete it as
+        # dead code: the engine cannot tell a repeat from a rival.
+        m = _machine(None, states={
+            "a": State("a", holder="r", accepting=True),
+            "b": State("b", accepting=True)}, transitions=[
+            Transition("a", "step", "r", "b"),
+            Transition("a", "step", "r", "b")])
+        self.assertTrue(any("declared twice" in p for p in check_machine(m)))
+        v = gate(m, _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.legal, v.reason), (False, "ambiguous"))
 
     def test_a_refusal_in_the_history_does_not_refuse_an_outbound_message(
             self):

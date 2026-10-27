@@ -220,11 +220,14 @@ class TestChecksNoTaskOwned(unittest.TestCase):
         self.assertTrue(any("'awaiting-triage'" in p and "'question'" in p
                             for p in problems), problems)
 
-    def test_two_transitions_with_one_trigger_and_one_target_are_not_reported(self):
-        # A word-for-word repeat of a transition is redundant, not
-        # ambiguous: it adds no choice the declaration did not make. A
-        # repeat that differs in `signal`, `effects` or guard is a rival,
-        # and is reported (TestSharedTargetIsStillAChoice).
+    def test_a_word_for_word_repeat_of_a_transition_is_reported(self):
+        # This test used to be `..._are_not_reported` and said a duplicate
+        # is "redundant, not ambiguous: the fold still has one result". That
+        # was wrong. The engine cannot tell a repeat from a rival: both
+        # fire on one message, and it refuses the message as "ambiguous". A
+        # checker that passed the repeat called well-formed a machine with a
+        # step it could never take. A repeat says nothing the single
+        # transition does not, so it is reported (claude-plugins#51).
         m = parse(VALID)
         first = [t for t in m.transitions
                  if (t.frm, t.on, t.by) == ("awaiting-triage", "question",
@@ -232,8 +235,10 @@ class TestChecksNoTaskOwned(unittest.TestCase):
         m.transitions.append(type(first)(
             first.frm, first.on, first.by, first.to, signal=first.signal,
             effects=first.effects, guard=first.guard))
-        self.assertEqual(
-            [p for p in check_machine(m) if "nondeterministic" in p], [])
+        problems = [p for p in check_machine(m) if "declared twice" in p]
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'awaiting-triage'", problems[0])
+        self.assertIn("'question'", problems[0])
 
     def test_a_holder_contradicting_every_outgoing_by_is_reported(self):
         # `holder` and `by` both answer "who acts next". Declared twice,
@@ -380,12 +385,15 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
         self.assertEqual(
             len([p for p in check_machine(m) if "nondeterministic" in p]), 1)
 
-    def test_a_word_for_word_repeat_stays_legal(self):
+    def test_a_word_for_word_repeat_is_reported_once_as_declared_twice(self):
         m = parse(DECLARED_SHARED % (
             '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
             '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }'))
-        self.assertEqual(
-            [p for p in check_machine(m) if "nondeterministic" in p], [])
+        problems = check_machine(m)
+        self.assertEqual([p for p in problems if "declared twice" in p],
+                         ["transition from 'a' on 'x' by 'r' to 'b' is "
+                          "declared twice; delete one"])
+        self.assertEqual([p for p in problems if "nondeterministic" in p], [])
 
 
 class TestAcceptingStates(unittest.TestCase):
