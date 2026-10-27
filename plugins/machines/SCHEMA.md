@@ -711,8 +711,8 @@ Each entry is a transition, with these fields:
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
   are held to the same rule. More than one can fire on one trigger and nothing declared
   says which, whether or not `effects` are involved (each may, for example, require its own
-  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — same
-  every field, its guard and its effects — is reported too, as declared twice. The test is derived from
+  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — the same
+  value in every field, including its guard and its effects — is reported too, as declared twice. The test is derived from
   the fields a transition, a guard and an effect actually carry, not from a hand-written list
   of them, so a field added later is part of it without anyone remembering to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
   message that matches both as `ambiguous`, so a machine that passed with a repeat would have
@@ -732,10 +732,11 @@ Each entry is a transition, with these fields:
     - verb: escalate
   ```
 
-  An entry has **exactly two keys, `verb` and `args`**; any other key is rejected by name.
-  **`verb`** is required, a string, and a lowercase dotted name (`label.add`). It has its own
-  pattern and not the one `fields` uses, because that one forbids a `.` and every verb has
-  one. **`args`** is optional and defaults to an empty mapping: leaving it out and writing
+  An entry has **two keys at most, `verb` and `args`**; any other key is rejected by name.
+  **`verb`** is required, a string, and a lowercase name that may be dotted (`label.add`, or
+  `escalate` with no dot). It has its own pattern and not the one `fields` uses, because that
+  one forbids a `.` and some verbs have one, so a verb needs a pattern that permits a dotted
+  name and does not require it. **`args`** is optional and defaults to an empty mapping: leaving it out and writing
   `args: {}` mean the same, which is why `escalate` needs no `args`. `args: null` is refused,
   not read as empty. An argument's value is never defaulted. A string entry such as
   `label.add:session-relay:open` is refused: a string cannot carry a verb with two arguments

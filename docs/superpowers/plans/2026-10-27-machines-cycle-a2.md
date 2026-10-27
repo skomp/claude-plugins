@@ -179,8 +179,10 @@ effects:
   - verb: escalate
 ```
 
-- **`verb`** is required, a string, and must match `VERB`. A dotted name is the point: the
-  existing verbs are dotted and `NAME` forbids a dot.
+- **`verb`** is required, a string, and must match `VERB`. A dotted name must be permitted:
+  `NAME` forbids a dot and some verbs have one. (This item first said the existing verbs are all
+  dotted, the point of the pattern. `escalate` has no dot, so that was false. The whole-branch
+  review found it on 2026-10-27, after SCHEMA.md had copied the claim.)
 - **`args`** is optional and defaults to `{}`. Omitting it and writing `args: {}` mean the same
   thing, and `escalate` is why: requiring an empty mapping on every argument-free verb is noise
   a reader has to skip. **An argument's value is never defaulted** — a default is a value nobody
@@ -412,8 +414,10 @@ depends on it.
 
 1. **`args` is optional and defaults to `{}`.** The alternative is requiring `args: {}` on every
    argument-free verb, which is noise. *Cost: one branch in the parser.*
-2. **A verb name gets its own pattern, `VERB`, not `NAME`.** Measured: `NAME` rejects a dot and
-   every existing verb has one. *Cost: one constant.*
+2. **A verb name gets its own pattern, `VERB`, not `NAME`.** `NAME` rejects a dot and
+   some verbs have one, so the pattern must permit a dotted name. (This item first said "every
+   existing verb has one"; `escalate` has none, so that was false. Found by the whole-branch review
+   on 2026-10-27.) *Cost: one constant.*
 3. **Argument types are `string`, `int`, `bool` — their own vocabulary, not `FIELD_TYPES`.**
    A header field may not be a string; a verb argument must be. *Cost: one constant, and a
    reader has two lists to keep straight, which Task 4 must make obvious.*
