@@ -43,6 +43,17 @@ NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 # ordering defined anywhere in the spec for one to compare against.
 FIELD_TYPES = ("int", "bool")
 
+# The types a verb's argument may carry. Not `FIELD_TYPES`: that governs a
+# message's header fields, which a guard compares arithmetically, and has
+# no string. A verb argument may be a string (a label name), so argument
+# types are their own vocabulary.
+ARG_TYPES = ("string", "int", "bool")
+
+# What a verb name may look like: lower-case words joined by dots
+# (`label.add`). Not `NAME`, which forbids a dot. This pins a shape only;
+# which verbs exist is a separate question.
+VERB = re.compile(r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$")
+
 # The closed set of values a role may bind to: the kind of participant
 # that fills the role. Closed for the same reason `FIELD_TYPES` is: an
 # open word (`human`, `bot`, ...) would let a publisher declare a role no
@@ -149,6 +160,35 @@ class Guard(object):
         self.field = field
         self.op = op
         self.register = register
+
+
+class Effect(object):
+    """A side effect a transition requires when it fires: a `verb` and
+    typed `args`, a dict of argument name to a `str`, `int` or `bool`.
+
+    This class only holds the shape. Whether the verb exists and takes
+    these arguments is `check_machine`'s question, not this class's.
+    """
+
+    def __init__(self, verb, args=None):
+        self.verb = verb
+        self.args = dict(args or {})
+
+    def __eq__(self, other):
+        return (isinstance(other, Effect) and self.verb == other.verb
+                and self.args == other.args
+                and all(type(self.args[k]) is type(other.args[k])
+                        for k in self.args))
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __hash__(self):
+        return hash((self.verb, tuple(sorted(
+            (k, type(v).__name__, v) for k, v in self.args.items()))))
+
+    def __repr__(self):
+        return "Effect(%r, %r)" % (self.verb, self.args)
 
 
 class State(object):
@@ -500,6 +540,12 @@ def check_machine(m):
 
     for t in m.transitions:
         for effect in t.effects:
+            # TEMPORARY (cycle A.2, Task 1): render the Effect in the old
+            # string form so this check still runs. Task 2 replaces the
+            # whole block with a BUILTIN_VERBS check and deletes this.
+            if isinstance(effect, Effect):
+                effect = effect.verb + "".join(
+                    ":%s" % v for v in effect.args.values())
             if effect == "escalate":
                 continue
             prefix = next(

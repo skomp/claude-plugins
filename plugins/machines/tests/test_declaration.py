@@ -53,13 +53,13 @@ states:
   - { name: stalled, terminal: true }
 transitions:
   - { from: unopened, on: triage, by: initiator, to: awaiting-triage, signal: true,
-      effects: ["label.add:session-relay:open"] }
+      effects: [{ verb: label.add, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: question, by: responder, to: awaiting-answer, signal: true }
   - { from: awaiting-answer, on: answer, by: initiator, to: awaiting-triage, signal: true }
   - { from: awaiting-triage, on: conclusion, by: responder, to: concluded, signal: true,
-      effects: ["label.remove:session-relay:open"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: stalemate, by: responder, to: stalled, signal: true,
-      effects: ["label.remove:session-relay:open", "label.add:session-relay:stalled", "escalate"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }, { verb: label.add, args: { name: "session-relay:stalled" } }, { verb: escalate }] }
 ```
 """
 
@@ -340,13 +340,13 @@ _STATES_BLOCK = """states:
 
 _TRANSITIONS_BLOCK = """transitions:
   - { from: unopened, on: triage, by: initiator, to: awaiting-triage, signal: true,
-      effects: ["label.add:session-relay:open"] }
+      effects: [{ verb: label.add, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: question, by: responder, to: awaiting-answer, signal: true }
   - { from: awaiting-answer, on: answer, by: initiator, to: awaiting-triage, signal: true }
   - { from: awaiting-triage, on: conclusion, by: responder, to: concluded, signal: true,
-      effects: ["label.remove:session-relay:open"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: stalemate, by: responder, to: stalled, signal: true,
-      effects: ["label.remove:session-relay:open", "label.add:session-relay:stalled", "escalate"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }, { verb: label.add, args: { name: "session-relay:stalled" } }, { verb: escalate }] }
 """
 
 class TestMalformedListShapedFields(unittest.TestCase):
@@ -380,7 +380,7 @@ _ROLES_BLOCK = """roles:
 _A_STATE = "- { name: stalled, terminal: true }"
 _A_TRANSITION = ("  - { from: awaiting-triage, on: question, by: responder, "
                  "to: awaiting-answer, signal: true }")
-_AN_EFFECTS_LIST = 'effects: ["label.remove:session-relay:open"] }'
+_AN_EFFECTS_LIST = 'effects: [{ verb: label.remove, args: { name: "session-relay:open" } }] }'
 
 
 class TestMalformedInputIsRejectedByNameNotByTraceback(unittest.TestCase):
@@ -550,6 +550,92 @@ class TestMalformedInputIsRejectedByNameNotByTraceback(unittest.TestCase):
         # The row that did not crash: eight problems, one per character of
         # "escalate", every one of them wrong.
         self.assert_rejected("effects", _AN_EFFECTS_LIST, "effects: escalate }")
+
+
+class TestStructuredEffects(unittest.TestCase):
+    """An effect is a shape -- a `verb` and typed `args` -- and the parser
+    refuses anything that only looks like one. It validates no verb name
+    and no arity: that is `check_machine`'s."""
+
+    ANCHOR = _AN_EFFECTS_LIST
+
+    def parse_with(self, effects_text):
+        self.assertIn(self.ANCHOR, VALID, "the splice anchor is stale")
+        return parse(VALID.replace(self.ANCHOR, "effects: %s }" % effects_text))
+
+    def effects_of(self, effects_text):
+        m = self.parse_with(effects_text)
+        return [t for t in m.transitions if t.on == "conclusion"][0].effects
+
+    def assert_rejected(self, field, effects_text, fragment=None):
+        with self.assertRaises(DeclarationError) as ctx:
+            self.parse_with(effects_text)
+        self.assertEqual(ctx.exception.field, field)
+        if fragment is not None:
+            self.assertIn(fragment, str(ctx.exception))
+
+    def test_an_entry_that_is_a_string_is_refused(self):
+        self.assert_rejected("effects", '["escalate"]')
+
+    def test_a_bare_verb_with_no_mapping_around_it_is_refused(self):
+        self.assert_rejected("effects", "[escalate]")
+
+    def test_an_entry_without_a_verb_is_refused(self):
+        self.assert_rejected("verb", "[{ args: {} }]")
+
+    def test_a_verb_with_a_space_is_refused(self):
+        self.assert_rejected("verb", '[{ verb: "label add" }]')
+
+    def test_a_verb_with_a_capital_is_refused(self):
+        self.assert_rejected("verb", "[{ verb: Escalate }]")
+
+    def test_a_verb_with_a_leading_dot_is_refused(self):
+        self.assert_rejected("verb", '[{ verb: ".escalate" }]')
+
+    def test_a_verb_that_is_not_a_string_is_refused(self):
+        self.assert_rejected("verb", "[{ verb: 5 }]")
+
+    def test_an_unknown_key_on_an_entry_is_refused_naming_the_key(self):
+        self.assert_rejected(
+            "colour", "[{ verb: escalate, colour: red }]", "colour")
+
+    def test_args_that_is_a_list_is_refused(self):
+        self.assert_rejected("args", "[{ verb: label.add, args: [x] }]")
+
+    def test_a_float_argument_is_refused(self):
+        self.assert_rejected("args", "[{ verb: v, args: { n: 1.5 } }]", "1.5")
+
+    def test_a_none_argument_is_refused(self):
+        self.assert_rejected("args", "[{ verb: v, args: { n: null } }]", "None")
+
+    def test_an_argument_name_that_is_not_a_string_is_refused(self):
+        self.assert_rejected("args", "[{ verb: v, args: { 5: x } }]")
+
+    def test_omitted_args_parse_to_an_empty_mapping(self):
+        [e] = self.effects_of("[{ verb: escalate }]")
+        self.assertEqual((e.verb, e.args), ("escalate", {}))
+
+    def test_empty_args_parse_the_same_as_omitted_args(self):
+        [a] = self.effects_of("[{ verb: escalate }]")
+        [b] = self.effects_of("[{ verb: escalate, args: {} }]")
+        self.assertEqual(a, b)
+
+    def test_string_int_and_bool_arguments_keep_their_python_types(self):
+        [e] = self.effects_of(
+            '[{ verb: v, args: { s: "x", i: 3, b: true } }]')
+        self.assertEqual(e.args, {"s": "x", "i": 3, "b": True})
+        self.assertIs(type(e.args["s"]), str)
+        self.assertIs(type(e.args["i"]), int)
+        self.assertIs(type(e.args["b"]), bool)
+
+    def test_a_dotted_verb_parses(self):
+        [e] = self.effects_of("[{ verb: label.add }]")
+        self.assertEqual(e.verb, "label.add")
+
+    def test_an_int_one_and_a_bool_true_are_different_effects(self):
+        [a] = self.effects_of("[{ verb: v, args: { n: 1 } }]")
+        [b] = self.effects_of("[{ verb: v, args: { n: true } }]")
+        self.assertNotEqual(a, b)
 
 
 if __name__ == "__main__":
