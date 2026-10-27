@@ -2,6 +2,7 @@ import unittest
 import machines.machine as machine_module
 from machines.declaration import parse
 from machines.machine import (Machine, State, Transition, check_machine,
+                               Effect, Guard, _repeat_key,
                                _MAX_PREFIX_LENGTH)
 from tests.test_declaration import VALID  # the known-good declaration
 from tests.test_guards import GUARDED  # the known-good guarded declaration
@@ -145,20 +146,218 @@ class TestCheckMachine(unittest.TestCase):
             "orphan", terminal=True, accepting=True)
         self.assertTrue(any("orphan" in p for p in check_machine(m)))
 
+    # The escalate entry in VALID, spliced for each effect below.
+    ESC = "{ verb: escalate }"
+
     def test_an_effect_outside_the_vocabulary_is_reported(self):
-        m = mutate('"label.add:session-relay:stalled"', '"run:curl example.com"')
-        self.assertTrue(any("run:curl" in p for p in check_machine(m)))
+        m = mutate(self.ESC, "{ verb: run, args: { cmd: curl } }")
+        problems = check_machine(m)
+        self.assertTrue(any("'run'" in p and "label.add" in p
+                            and "escalate" in p for p in problems), problems)
 
     def test_each_permitted_effect_form_is_accepted(self):
-        for effect in ("escalate", "label.add:anything", "label.remove:anything"):
-            m = mutate('"escalate"', '"%s"' % effect)
-            self.assertEqual(check_machine(m), [], effect)
+        for effect in ("{ verb: escalate }", "{ verb: escalate, args: {} }",
+                       "{ verb: label.add, args: { name: anything } }",
+                       "{ verb: label.remove, args: { name: anything } }"):
+            self.assertEqual(check_machine(mutate(self.ESC, effect)), [],
+                             effect)
 
-    def test_a_label_effect_with_an_empty_name_is_reported(self):
-        for effect in ("label.add:", "label.remove:"):
-            m = mutate('"escalate"', '"%s"' % effect)
-            self.assertTrue(
-                any(repr(effect) in p for p in check_machine(m)), effect)
+    def test_an_argument_the_verb_does_not_declare_is_reported(self):
+        m = mutate(self.ESC, "{ verb: escalate, args: { urgent: yes } }")
+        problems = check_machine(m)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'urgent'", problems[0])
+        self.assertIn("'escalate'", problems[0])
+
+    def test_an_undeclared_extra_argument_is_reported_beside_a_valid_one(self):
+        m = mutate(self.ESC, "{ verb: label.add, args: { name: a, extra: b } }")
+        problems = check_machine(m)
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'extra'", problems[0])
+
+    def test_a_declared_argument_that_is_missing_is_reported(self):
+        for effect in ("{ verb: label.add }",
+                       "{ verb: label.remove, args: {} }"):
+            problems = check_machine(mutate(self.ESC, effect))
+            self.assertEqual(len(problems), 1, (effect, problems))
+            self.assertIn("'name'", problems[0])
+
+    def test_an_empty_string_argument_is_reported_as_empty_not_as_wrong_type(self):
+        for verb in ("label.add", "label.remove"):
+            problems = check_machine(mutate(
+                self.ESC, "{ verb: %s, args: { name: '' } }" % verb))
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn(repr(verb), problems[0])
+            self.assertIn("'name'", problems[0])
+            self.assertIn("empty", problems[0])
+            self.assertNotIn("arrived", problems[0])
+
+    def test_a_string_where_int_is_declared_is_reported(self):
+        problems = self._with_verb({"n": "int"}, {"n": "three"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'n'", problems[0])
+        self.assertIn("int", problems[0])
+        self.assertIn("'three'", problems[0])
+
+    def test_an_int_where_string_is_declared_is_reported(self):
+        problems = check_machine(mutate(
+            self.ESC, "{ verb: label.add, args: { name: 3 } }"))
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'name'", problems[0])
+        self.assertIn("string", problems[0])
+        self.assertIn("3", problems[0])
+
+    def test_a_bool_where_int_is_declared_is_reported(self):
+        # `isinstance(True, int)` is True; unguarded, this is accepted.
+        problems = self._with_verb({"n": "int"}, {"n": True})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("'n'", problems[0])
+        self.assertIn("int", problems[0])
+        self.assertIn("bool", problems[0])
+
+    def test_an_int_where_int_is_declared_is_accepted(self):
+        self.assertEqual(self._with_verb({"n": "int"}, {"n": 3}), [])
+
+    def test_a_bool_where_bool_is_declared_is_accepted(self):
+        self.assertEqual(self._with_verb({"f": "bool"}, {"f": False}), [])
+
+    def test_an_int_where_bool_is_declared_is_reported(self):
+        self.assertEqual(
+            len(self._with_verb({"f": "bool"}, {"f": 1})), 1)
+
+    def test_the_vocabulary_is_not_opened_by_a_structured_effect(self):
+        self.assertEqual(sorted(machine_module.BUILTIN_VERBS),
+                         ["escalate", "label.add", "label.remove"])
+
+    def test_every_builtin_type_word_is_one_the_checker_can_test(self):
+        for verb, declared in machine_module.BUILTIN_VERBS.items():
+            for name, word in declared.items():
+                self.assertIn(word, machine_module.ARG_TYPES,
+                              "%s.%s declares %r" % (verb, name, word))
+
+    def test_every_builtin_verb_name_matches_verb(self):
+        for verb in machine_module.BUILTIN_VERBS:
+            self.assertRegex(verb, machine_module.VERB)
+
+    def test_every_arg_type_word_has_a_test_and_names_a_value(self):
+        samples = {"string": "x", "int": 1, "bool": True}
+        self.assertEqual(sorted(machine_module.ARG_TYPES), sorted(samples))
+        for word in machine_module.ARG_TYPES:
+            self.assertEqual(machine_module._arg_type(samples[word]), word)
+
+    def _with_verb(self, declared, args):
+        """No built-in verb takes an int or a bool, so declare one here.
+
+        `probe` is a local fixture for argument types the three real verbs
+        do not have. It is restored in `finally`; it is not an opened
+        vocabulary, which `test_the_vocabulary_is_not_opened_by_a_structured_effect`
+        pins separately.
+        """
+        saved = dict(machine_module.BUILTIN_VERBS)
+        machine_module.BUILTIN_VERBS["probe"] = declared
+        try:
+            return check_machine(
+                self._machine_with_effect(Effect("probe", args)))
+        finally:
+            machine_module.BUILTIN_VERBS.clear()
+            machine_module.BUILTIN_VERBS.update(saved)
+
+    @staticmethod
+    def _machine_with_effect(effect):
+        m = parse(VALID)
+        m.transitions[0].effects = [effect]
+        return m
+
+    def test_the_repeat_key_reads_every_field_of_each_class(self):
+        # claude-plugins#55: a key that hand-lists fields silently drops a
+        # later field. Read the fields from the objects, not from a list
+        # written here, so a new one is exercised the day it is added.
+        import copy
+        bases = [
+            Transition("a", "x", "r", "b", signal=True,
+                       effects=[Effect("label.add", {"name": "n"})],
+                       guard=Guard("f", "ge", "reg")),
+            Guard("f", "ge", "reg"),
+            Effect("label.add", {"name": "n"}),
+        ]
+        for base in bases:
+            self.assertTrue(vars(base), type(base))
+            for field, value in vars(base).items():
+                other = copy.deepcopy(base)
+                if isinstance(value, bool):
+                    changed = not value
+                elif isinstance(value, str):
+                    changed = value + "-changed"
+                elif isinstance(value, list):
+                    changed = value + [Effect("escalate")]
+                elif isinstance(value, dict):
+                    changed = dict(value, extra="x")
+                elif value is None or isinstance(value, Guard):
+                    changed = Guard("g", "lt", "other")
+                else:
+                    self.fail("no way to change %s.%s (%r): teach this "
+                              "test the new type" % (
+                                  type(base).__name__, field, value))
+                setattr(other, field, changed)
+                self.assertNotEqual(
+                    _repeat_key(base), _repeat_key(other),
+                    "%s.%s is not part of the repeat key"
+                    % (type(base).__name__, field))
+
+    def test_a_field_added_to_a_class_is_part_of_the_repeat_key(self):
+        for make in (lambda: Effect("escalate"),
+                     lambda: Guard("f", "ge", "reg"),
+                     lambda: Transition("a", "x", "r", "b")):
+            one, two = make(), make()
+            self.assertEqual(_repeat_key(one), _repeat_key(two))
+            one.added_later = 1
+            two.added_later = 2
+            self.assertNotEqual(_repeat_key(one), _repeat_key(two),
+                                type(one).__name__)
+
+    def test_a_field_added_to_a_class_is_not_collapsed_into_a_repeat(self):
+        # The behavioural half of the test above: through `check_machine`,
+        # two rivals that differ only in a field added later must not be
+        # reported as one transition declared twice (claude-plugins#55).
+        def rivals(touch):
+            m = parse(VALID)
+            first = [t for t in m.transitions
+                     if (t.frm, t.on, t.by) == ("awaiting-triage", "question",
+                                                "responder")][0]
+            pair = []
+            for n in (1, 2):
+                t = Transition(first.frm, first.on, first.by, first.to,
+                               signal=first.signal,
+                               effects=[Effect("escalate")],
+                               guard=Guard("n", "ge", "hi"))
+                touch(t, n)
+                pair.append(t)
+            m.transitions.extend(pair)
+            return [p for p in check_machine(m) if "declared twice" in p]
+
+        def on_transition(t, n): t.added_later = n
+        def on_guard(t, n): t.guard.added_later = n
+        def on_effect(t, n): t.effects[0].added_later = n
+        for touch in (on_transition, on_guard, on_effect):
+            self.assertEqual(rivals(touch), [], touch.__name__)
+
+    def test_an_int_argument_and_a_bool_one_are_not_a_repeat(self):
+        # "probe" is only a name on an Effect here; BUILTIN_VERBS is not
+        # touched and the checker is not run.
+        self.assertNotEqual(_repeat_key(Effect("probe", {"n": 1})),
+                            _repeat_key(Effect("probe", {"n": True})))
+
+    def test_two_transitions_differing_only_in_an_effect_argument_are_not_a_repeat(self):
+        m = parse(VALID)
+        first = [t for t in m.transitions
+                 if (t.frm, t.on, t.by) == ("awaiting-triage", "question",
+                                            "responder")][0]
+        for name in ("one", "two"):
+            m.transitions.append(Transition(
+                first.frm, first.on, first.by, first.to, signal=first.signal,
+                effects=[Effect("label.add", {"name": name})]))
+        self.assertEqual(
+            [p for p in check_machine(m) if "declared twice" in p], [])
 
     def test_an_undeclared_initial_does_not_cascade_into_reachability_noise(self):
         # A typo in `initial` should not amplify into one "not reachable"
@@ -356,8 +555,8 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
 
     def test_same_target_different_effects_is_reported(self):
         m = parse(DECLARED_SHARED % (
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:two"] }'))
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: two } }] }'))
         problems = [p for p in check_machine(m) if "nondeterministic" in p]
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("'a'", problems[0])
@@ -391,8 +590,8 @@ class TestSharedTargetIsStillAChoice(unittest.TestCase):
 
     def test_a_word_for_word_repeat_is_reported_once_as_declared_twice(self):
         m = parse(DECLARED_SHARED % (
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }',
-            '{ from: a, on: x, by: r, to: b, signal: true, effects: ["label.add:one"] }'))
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }',
+            '{ from: a, on: x, by: r, to: b, signal: true, effects: [{ verb: label.add, args: { name: one } }] }'))
         problems = check_machine(m)
         self.assertEqual([p for p in problems if "declared twice" in p],
                          ["transition from 'a' on 'x' by 'r' to 'b' is "
@@ -474,7 +673,7 @@ class TestAcceptingStates(unittest.TestCase):
             [
                 Transition("idle", "fork", "role", "doomed", signal=True),
                 Transition("doomed", "fail", "role", "aborted", signal=True,
-                           effects=["escalate"]),
+                           effects=[Effect("escalate")]),
             ],
         )
         self.assertEqual(check_machine(m), [])
@@ -537,7 +736,7 @@ class TestAcceptingStates(unittest.TestCase):
             [
                 Transition("idle", "go", "role", "idle", signal=True),
                 Transition("idle", "give-up", "role", "aborted", signal=True,
-                           effects=["escalate"]),
+                           effects=[Effect("escalate")]),
             ],
         )
         self.assertEqual(check_machine(m), [])
@@ -710,7 +909,7 @@ class TestCapSubjects(unittest.TestCase):
             [
                 Transition("idle", "go", "role", "idle", signal=True),
                 Transition("idle", "give-up", "role", "aborted", signal=True,
-                           effects=["escalate"]),
+                           effects=[Effect("escalate")]),
             ],
         )
         self.assertEqual([p for p in check_machine(m) if "cap" in p], [])
@@ -734,7 +933,7 @@ class TestCapSubjects(unittest.TestCase):
             [
                 Transition("idle", "fork", "role", "doomed", signal=True),
                 Transition("doomed", "fail", "role", "aborted", signal=True,
-                           effects=["escalate"]),
+                           effects=[Effect("escalate")]),
             ],
         )
         self.assertEqual(check_machine(m), [])
@@ -763,7 +962,7 @@ class TestCapSubjects(unittest.TestCase):
             },
             [
                 Transition("start", "a", "role", "aborted", signal=True,
-                           effects=["escalate"]),
+                           effects=[Effect("escalate")]),
                 Transition("start", "b", "role", "mid", signal=True),
                 Transition("mid", "c", "role", "done", signal=True),
             ],

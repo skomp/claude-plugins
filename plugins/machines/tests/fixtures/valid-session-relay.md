@@ -28,13 +28,13 @@ states:
   - { name: stalled, terminal: true }
 transitions:
   - { from: unopened, on: triage, by: initiator, to: awaiting-triage, signal: true,
-      effects: ["label.add:session-relay:open"] }
+      effects: [{ verb: label.add, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: question, by: responder, to: awaiting-answer, signal: true }
   - { from: awaiting-answer, on: answer, by: initiator, to: awaiting-triage, signal: true }
   - { from: awaiting-triage, on: conclusion, by: responder, to: concluded, signal: true,
-      effects: ["label.remove:session-relay:open"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }] }
   - { from: awaiting-triage, on: stalemate, by: responder, to: stalled, signal: true,
-      effects: ["label.remove:session-relay:open", "label.add:session-relay:stalled", "escalate"] }
+      effects: [{ verb: label.remove, args: { name: "session-relay:open" } }, { verb: label.add, args: { name: "session-relay:stalled" } }, { verb: escalate }] }
 ```
 
 The protocol ensures that a session between two repositories progresses through well-defined states, with each transition requiring explicit signals and optional side effects on the system state.
