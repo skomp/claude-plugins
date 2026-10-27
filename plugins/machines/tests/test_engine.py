@@ -7,7 +7,7 @@ import machines.engine
 from machines.declaration import parse
 from machines.engine import Offer, Remaining, Verdict, gate, verdict
 from machines.envelope import Envelope, Message, Trace, load_trace
-from machines.machine import (Field, Guard, Machine, Register, State,
+from machines.machine import (Effect, Field, Guard, Machine, Register, State,
                               Transition, check_machine)
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -28,7 +28,7 @@ def _machine(cap, cap_scope="channel", transitions=None, states=None):
                         "b": State("b", terminal=True, accepting=True)}
     transitions = transitions if transitions is not None else [
         Transition("a", "step", "r", "b", signal=True,
-                   effects=["escalate"])]
+                   effects=[Effect("escalate")])]
     return Machine("m", "v1", "m:v1 ", {"r": "session", "s": "session"},
                    ["step"], cap, "a", states, transitions,
                    cap_scope=cap_scope)
@@ -196,7 +196,7 @@ def _loop(cap, scope, signal=True, roles=("r",)):
     return _machine(cap, scope,
                     states={"a": State("a", holder="r", accepting=True)},
                     transitions=[Transition("a", "step", r, "a", signal=signal,
-                                            effects=["escalate"])
+                                            effects=[Effect("escalate")])
                                  for r in roles])
 
 

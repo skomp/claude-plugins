@@ -424,6 +424,74 @@ _MAX_PREFIX_LENGTH = 400
 _MAX_CAP_SEARCH = 1_000_000
 
 
+# The verbs a machine may name, and the typed arguments each takes. Closed
+# on purpose: opening the vocabulary needs a transport declaration (cycle
+# C.1), and this table is what C.2 replaces. A structured effect is not
+# evidence the vocabulary opened.
+BUILTIN_VERBS = {
+    "label.add": {"name": "string"},
+    "label.remove": {"name": "string"},
+    "escalate": {},
+}
+
+
+def _arg_type(value):
+    # `bool` first: `isinstance(True, int)` is True, so testing `int`
+    # first would accept a bool wherever an int is declared.
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, str):
+        return "string"
+    return type(value).__name__
+
+
+def _effect_problems(effect):
+    """Every problem with one effect, each as its own string."""
+    if not isinstance(effect, Effect):
+        return ["effect %r is not an Effect" % (effect,)]
+    declared = BUILTIN_VERBS.get(effect.verb)
+    if declared is None:
+        return ["effect verb %r is not in the vocabulary (%s)"
+                % (effect.verb, ", ".join(sorted(BUILTIN_VERBS)))]
+    problems = []
+    for name in sorted(effect.args):
+        if name not in declared:
+            problems.append("effect %r has an argument %r that the verb "
+                            "does not declare" % (effect.verb, name))
+    for name in sorted(declared):
+        if name not in effect.args:
+            problems.append("effect %r is missing the argument %r"
+                            % (effect.verb, name))
+            continue
+        arrived = _arg_type(effect.args[name])
+        if arrived != declared[name]:
+            problems.append(
+                "effect %r argument %r is declared %s, but %r (%s) arrived"
+                % (effect.verb, name, declared[name], effect.args[name],
+                   arrived))
+    return problems
+
+
+def _repeat_key(obj):
+    """A hashable key for `obj` built from its own fields, so that a field
+    added to `Transition`, `Guard` or `Effect` is part of "declared twice"
+    without anyone remembering to add it here (claude-plugins#55).
+
+    Values carry their type name: `1` and `True` compare equal in Python,
+    and an `int` argument is not a `bool` one.
+    """
+    if isinstance(obj, (list, tuple)):
+        return tuple(_repeat_key(v) for v in obj)
+    if isinstance(obj, dict):
+        return tuple(sorted((k, _repeat_key(v)) for k, v in obj.items()))
+    if hasattr(obj, "__dict__"):
+        return (type(obj).__name__, tuple(
+            (k, _repeat_key(v)) for k, v in sorted(vars(obj).items())))
+    return (type(obj).__name__, obj)
+
+
 def prefix_problem(prefix):
     """Check a prefix pattern for whether a `Machine` can actually use it:
     whether it is short enough, and whether it will compile.
@@ -540,22 +608,7 @@ def check_machine(m):
 
     for t in m.transitions:
         for effect in t.effects:
-            # TEMPORARY (cycle A.2, Task 1): render the Effect in the old
-            # string form so this check still runs. Task 2 replaces the
-            # whole block with a BUILTIN_VERBS check and deletes this.
-            if isinstance(effect, Effect):
-                effect = effect.verb + "".join(
-                    ":%s" % v for v in effect.args.values())
-            if effect == "escalate":
-                continue
-            prefix = next(
-                (p for p in ("label.add:", "label.remove:") if effect.startswith(p)),
-                None,
-            )
-            if prefix is None or len(effect) == len(prefix):
-                problems.append("effect %r is not in the vocabulary "
-                                "(label.add:<name>, label.remove:<name>, escalate)"
-                                % effect)
+            problems.extend(_effect_problems(effect))
 
     terminals = set(n for n, s in m.states.items() if s.terminal)
     accepting = set(n for n, s in m.states.items() if s.accepting)
@@ -638,9 +691,7 @@ def check_machine(m):
         members = []
         seen = set()
         for t in groups[trigger]:
-            key = (t.to, t.signal, tuple(t.effects),
-                   None if t.guard is None
-                   else (t.guard.field, t.guard.op, t.guard.register))
+            key = _repeat_key(t)
             if key in seen:
                 problems.append(
                     "transition from %r on %r by %r to %r is declared "
