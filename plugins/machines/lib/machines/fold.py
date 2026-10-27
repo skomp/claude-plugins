@@ -132,10 +132,11 @@ def _atom(a, b):
     return "LT" if a < b else ("EQ" if a == b else "GT")
 
 
-# `wrong_type` and `read_guard` are the shared guard evaluation. The inbound
-# path (`fold`, here) and the outbound path (`engine.gate`) both call them,
-# so a message is judged the same way whichever direction it travels; a
-# third caller must call these rather than re-implement either.
+# `wrong_type`, `read_guard` and `candidates` are the shared guard
+# evaluation. The inbound path (`fold`, here) and the outbound path
+# (`engine.gate`) both call them, so a message is judged the same way
+# whichever direction it travels; a third caller must call these rather than
+# re-implement any of them.
 
 def wrong_type(m, fields):
     """The first declared field carried with the wrong Python type, or None.
@@ -182,6 +183,42 @@ def read_guard(index, t, msg, registers):
     atom = _atom(value, current)
     return GuardReading(index, tid, g.field, g.op, g.register, value,
                         current, atom, atom in OP_ATOMS[g.op])
+
+
+class Candidates(object):
+    """What `candidates` found: `firing` the transitions that fire, in
+    declaration order; `readings` every guard read on the way, in the same
+    order; `ambiguous` true when more than one fires."""
+
+    def __init__(self, firing, readings):
+        self.firing = tuple(firing)
+        self.readings = tuple(readings)
+        self.ambiguous = len(self.firing) > 1
+
+
+def candidates(m, state, msg, registers, index):
+    """Which transitions fire on `(state, msg.kind, msg.by)` given
+    `msg.fields` and `registers`, and whether more than one did. This is the
+    rule, and both paths call it: `fold` for an arriving message, with the
+    registers as they were BEFORE that message is folded in, and
+    `engine.gate` for an outbound one, with the registers the whole trace
+    folded to. It reads only `msg.kind`, `msg.by` and `msg.fields`, which an
+    outbound message has in full; it never touches the envelope, which an
+    outbound message does not have yet. Every guard is read, in declaration
+    order, because "more than one fires" is a refusal and an ambiguity is
+    only visible if every candidate is evaluated."""
+    firing, readings = [], []
+    for t in m.transitions:
+        if t.frm != state or t.on != msg.kind or t.by != msg.by:
+            continue
+        if t.guard is None:
+            firing.append(t)
+            continue
+        reading = read_guard(index, t, msg, registers)
+        readings.append(reading)
+        if reading.fired:
+            firing.append(t)
+    return Candidates(firing, readings)
 
 
 def fold(m, trace, limit=MAX_FOLD_STEPS):
@@ -244,26 +281,16 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
         if concurrent_with:
             order = "concurrent"
 
-        # Candidates in declaration order, for a stable `guards` sequence;
-        # every one is evaluated, because "more than one fires" is a refusal.
-        firing = []
-        for t in m.transitions:
-            if t.frm != state or t.on != msg.kind or t.by != msg.by:
-                continue
-            if t.guard is None:
-                firing.append(t)
-                continue
-            reading = read_guard(index, t, msg, registers)
-            guards.append(reading)
-            if reading.fired:
-                firing.append(t)
+        found = candidates(m, state, msg, registers, index)
+        guards.extend(found.readings)
+        firing = found.firing
 
         if not firing:
             refuse("no transition",
                    "nothing fires from %r on %r by %r" % (state, msg.kind,
                                                           msg.by))
             continue
-        if len(firing) > 1:
+        if found.ambiguous:
             refuse("ambiguous", "%d transitions fire: %s" % (
                 len(firing),
                 "; ".join(repr(transition_id(t)) for t in firing)))
