@@ -79,3 +79,35 @@ When you change a skill:
    `grep -rniE '<real-name>|<real-name>' plugins/ && echo LEAK || echo clean`. A check that
    has only ever passed is not evidence — plant one of the strings in a scratch copy of
    `plugins/` first and confirm the grep reports LEAK.
+
+## The `machines` test suite, and mutation evidence
+
+`machines` is the one plugin with executable parts. Run its suite the way CI does, from
+`plugins/machines`:
+
+```
+PYTHONPATH=lib:. python3 -m unittest discover -s tests -t .
+```
+
+Two CLI tests used to resolve a fixture relative to the working directory, so the command
+above is the one to use and `-s tests -t .` is not optional.
+
+**Every new test here must be seen to fail under a mutation of the code it covers**, and the
+mutation belongs in the commit body. The reason is in `evidence-discipline`: a check that has
+only ever passed is not evidence. Cycle B found two tests that could not fail — a `Step`'s
+`frm` and `to` were asserted nowhere, so swapping them left 328 tests green, and a world-read
+invariance test folded a trace with no refusals in it, so the fields it compared were empty on
+both sides.
+
+**The trap that makes a mutation lie to you, measured on 2026-10-26.** A same-size edit that is
+restored within the same second lets Python reuse the `.pyc` of the mutated code, so the test
+keeps failing after you put the file back and you conclude the restore failed. `touch` the file
+after every mutation and every restore, or run `python3 -B`. **Mutate a copy under `/tmp`**
+(`git archive HEAD | tar -x -C /tmp/...`), never the checkout — another session may be live in
+it.
+
+**Do not publish a constant without a measurement beside it.** `pattern.py`'s
+`_MAX_NFA_STATES` shipped with a reasoned rationale that was wrong by a factor of ten;
+`machine.py`'s `_MAX_CAP_SEARCH` and `fold.py`'s `MAX_FOLD_STEPS` both carry the command and
+the numbers instead. A measurement is a measurement on a host: the same fold timed 16-22 µs per
+message on one machine and about 10 µs on another, so say which.
