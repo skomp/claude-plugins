@@ -471,6 +471,13 @@ def _effect_problems(effect):
                 "effect %r argument %r is declared %s, but %r (%s) arrived"
                 % (effect.verb, name, declared[name], effect.args[name],
                    arrived))
+        elif declared[name] == "string" and effect.args[name] == "":
+            # The right type, so not the message above: an empty string is
+            # a string. The old `label.add:` check rejected it, and a
+            # type-only check would have dropped that silently.
+            problems.append("effect %r argument %r is an empty string; a "
+                            "string argument must not be empty"
+                            % (effect.verb, name))
     return problems
 
 
@@ -478,6 +485,15 @@ def _repeat_key(obj):
     """A hashable key for `obj` built from its own fields, so that a field
     added to `Transition`, `Guard` or `Effect` is part of "declared twice"
     without anyone remembering to add it here (claude-plugins#55).
+
+    **Limit: this reads `vars(obj)`, the instance `__dict__`.** Every
+    attribute set on an instance is in the key, which is what closes the
+    trap. A class that declares `__slots__` has no `__dict__` and would be
+    keyed on nothing, and a class-level attribute is not in `vars()` of an
+    instance either: both would be skipped silently, and two rivals
+    differing only there would be reported as "declared twice". None
+    exists today. Whoever adds `__slots__` to `Transition`, `Guard` or
+    `Effect` must change this function first.
 
     Values carry their type name: `1` and `True` compare equal in Python,
     and an `int` argument is not a `bool` one.

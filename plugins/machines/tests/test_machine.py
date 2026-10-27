@@ -182,6 +182,16 @@ class TestCheckMachine(unittest.TestCase):
             self.assertEqual(len(problems), 1, (effect, problems))
             self.assertIn("'name'", problems[0])
 
+    def test_an_empty_string_argument_is_reported_as_empty_not_as_wrong_type(self):
+        for verb in ("label.add", "label.remove"):
+            problems = check_machine(mutate(
+                self.ESC, "{ verb: %s, args: { name: '' } }" % verb))
+            self.assertEqual(len(problems), 1, problems)
+            self.assertIn(repr(verb), problems[0])
+            self.assertIn("'name'", problems[0])
+            self.assertIn("empty", problems[0])
+            self.assertNotIn("arrived", problems[0])
+
     def test_a_string_where_int_is_declared_is_reported(self):
         problems = self._with_verb({"n": "int"}, {"n": "three"})
         self.assertEqual(len(problems), 1, problems)
@@ -220,7 +230,13 @@ class TestCheckMachine(unittest.TestCase):
                          ["escalate", "label.add", "label.remove"])
 
     def _with_verb(self, declared, args):
-        """No built-in verb takes an int or a bool, so declare one here."""
+        """No built-in verb takes an int or a bool, so declare one here.
+
+        `probe` is a local fixture for argument types the three real verbs
+        do not have. It is restored in `finally`; it is not an opened
+        vocabulary, which `test_the_vocabulary_is_not_opened_by_a_structured_effect`
+        pins separately.
+        """
         saved = dict(machine_module.BUILTIN_VERBS)
         machine_module.BUILTIN_VERBS["probe"] = declared
         try:
@@ -310,6 +326,8 @@ class TestCheckMachine(unittest.TestCase):
             self.assertEqual(rivals(touch), [], touch.__name__)
 
     def test_an_int_argument_and_a_bool_one_are_not_a_repeat(self):
+        # "probe" is only a name on an Effect here; BUILTIN_VERBS is not
+        # touched and the checker is not run.
         self.assertNotEqual(_repeat_key(Effect("probe", {"n": 1})),
                             _repeat_key(Effect("probe", {"n": True})))
 
