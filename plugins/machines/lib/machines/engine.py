@@ -45,7 +45,8 @@ class Verdict(object):
 
     def __init__(self, legal, reason, state, holder, accepting, terminal,
                  may_send, remaining, effects, order, concurrent_with,
-                 guards, world_reads, outbound_clock, refusals, truncated):
+                 guards, world_reads, outbound_clock, refusals, truncated,
+                 transport_effects=(), agent_effects=()):
         self.legal = legal
         self.reason = reason
         self.state = state
@@ -54,9 +55,12 @@ class Verdict(object):
         self.terminal = terminal
         self.may_send = tuple(may_send)
         self.remaining = remaining
-        # ONE unclassified list. What separates transport effects from agent
-        # effects is the transport declaration, which is cycle C.
+        # Every effect, in declared order. `transport_effects` and
+        # `agent_effects` partition it by the performer the transport
+        # declares for each verb; both are () when no transport was given.
         self.effects = tuple(effects)
+        self.transport_effects = tuple(transport_effects)
+        self.agent_effects = tuple(agent_effects)
         self.order = order
         self.concurrent_with = tuple(concurrent_with)
         self.guards = tuple(guards)
@@ -94,8 +98,27 @@ def _refusal_reason(refusals):
     return text
 
 
+def _classify(effects, transport):
+    """Split `effects` into (transport_effects, agent_effects) by the
+    performer `transport.verbs[verb].performer` declares, keeping order.
+    Reads attributes of the object it is handed and imports nothing. A verb
+    the transport does not declare raises ValueError: `check_machine(m,
+    verbs=transport.verbs)` would have refused the machine, so reaching this
+    is the caller's error, and no partial classification is returned."""
+    if transport is None:
+        return (), ()
+    by_transport, by_agent = [], []
+    for e in effects:
+        verb = transport.verbs.get(e.verb)
+        if verb is None:
+            raise ValueError("effect names verb %r, which the transport "
+                             "does not declare" % (e.verb,))
+        (by_agent if verb.performer == "agent" else by_transport).append(e)
+    return tuple(by_transport), tuple(by_agent)
+
+
 def _build(m, f, legal, reason, remaining, outbound=False, effects=(),
-           extra_guards=()):
+           extra_guards=(), transport=None):
     """Assemble a Verdict from a Fold. Shared by `verdict` and `gate`.
     `remaining` is `_remaining(m, f.spent)`, computed once by the caller.
 
@@ -116,6 +139,7 @@ def _build(m, f, legal, reason, remaining, outbound=False, effects=(),
         effects = tuple(last.transition.effects) if last else ()
         order = last.order if last else "ok"
         concurrent = last.concurrent_with if last else ()
+    by_transport, by_agent = _classify(effects, transport)
     return Verdict(
         legal=legal,
         reason=reason,
@@ -132,7 +156,9 @@ def _build(m, f, legal, reason, remaining, outbound=False, effects=(),
         world_reads=f.world_reads,
         outbound_clock=f.outbound_clock,
         refusals=f.refusals,
-        truncated=f.truncated)
+        truncated=f.truncated,
+        transport_effects=by_transport,
+        agent_effects=by_agent)
 
 
 def _truncated_reason(f):
@@ -164,20 +190,22 @@ def _overspend_reason(m, f):
     return None
 
 
-def verdict(m, trace, limit=MAX_FOLD_STEPS):
+def verdict(m, trace, limit=MAX_FOLD_STEPS, transport=None):
     f = fold(m, trace, limit)
     remaining = _remaining(m, f.spent)
     if f.truncated:
-        return _build(m, f, False, _truncated_reason(f), remaining)
+        return _build(m, f, False, _truncated_reason(f), remaining,
+                      transport=transport)
     if f.refusals:
-        return _build(m, f, False, _refusal_reason(f.refusals), remaining)
+        return _build(m, f, False, _refusal_reason(f.refusals), remaining,
+                      transport=transport)
     over = _overspend_reason(m, f)
     if over is not None:
-        return _build(m, f, False, over, remaining)
-    return _build(m, f, True, None, remaining)
+        return _build(m, f, False, over, remaining, transport=transport)
+    return _build(m, f, True, None, remaining, transport=transport)
 
 
-def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
+def gate(m, trace, outbound, limit=MAX_FOLD_STEPS, transport=None):
     """May `outbound` be sent now? Answered before the message exists.
 
     `legal` is judged against the folded state alone. It does NOT inherit
@@ -211,7 +239,8 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     remaining = _remaining(m, f.spent)
 
     def refuse(reason, readings=()):
-        return _build(m, f, False, reason, remaining, True, (), readings)
+        return _build(m, f, False, reason, remaining, True, (), readings,
+                      transport)
 
     if f.truncated:
         # The state is partial: nothing may be judged against it.
@@ -233,4 +262,4 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
             and remaining.headroom[outbound.by] <= 0):
         return refuse("cap exhausted", readings)
     return _build(m, f, True, None, remaining, True, tuple(t.effects),
-                  readings)
+                  readings, transport)

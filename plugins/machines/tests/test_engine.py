@@ -196,6 +196,69 @@ class Effects(unittest.TestCase):
         self.assertEqual(attrs & {"environ", "system", "popen"}, set())
 
 
+class TwoEffectLists(unittest.TestCase):
+    """The verdict's `transport_effects` and `agent_effects` (cycle C, task 4).
+    The engine reads `.verbs` and `.performer` off the object it is handed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from machines.transport import load_transport
+        cls.transport = load_transport(
+            FIXTURES / "transport-fake" / "transport")
+        cls.add = Effect("label.add", {"name": "x"})
+        cls.esc = Effect("escalate")
+        cls.rm = Effect("label.remove", {"name": "x"})
+        cls.machine = _machine(None, transitions=[
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=[cls.add, cls.esc, cls.rm, cls.esc])])
+
+    def _one_step(self):
+        return _trace([_msg("step", "r", "x", 1)])
+
+    def test_the_two_lists_partition_effects_and_keep_its_order(self):
+        v = verdict(self.machine, self._one_step(), transport=self.transport)
+        self.assertEqual(v.effects, (self.add, self.esc, self.rm, self.esc))
+        self.assertEqual(v.transport_effects, (self.add, self.rm))
+        self.assertEqual(v.agent_effects, (self.esc, self.esc))
+
+    def test_gate_classifies_the_effects_it_would_fire(self):
+        v = gate(self.machine, _trace([]), _out("step", "r", "x"),
+                 transport=self.transport)
+        self.assertEqual(v.transport_effects, (self.add, self.rm))
+        self.assertEqual(v.agent_effects, (self.esc, self.esc))
+
+    def test_without_a_transport_both_lists_are_empty(self):
+        v = verdict(self.machine, self._one_step())
+        self.assertEqual(len(v.effects), 4)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        v = gate(self.machine, _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+
+    def test_both_lists_are_empty_when_nothing_fired_or_the_gate_refuses(self):
+        v = verdict(self.machine, _trace([]), transport=self.transport)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        v = gate(self.machine, _trace([]), _out("nope", "r", "x"),
+                 transport=self.transport)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+
+    def test_an_undeclared_verb_raises_value_error_naming_it(self):
+        m = _machine(None, transitions=[
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=[Effect("no.such.verb")])])
+        with self.assertRaises(ValueError) as cm:
+            verdict(m, self._one_step(), transport=self.transport)
+        self.assertIn("no.such.verb", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            gate(m, _trace([]), _out("step", "r", "x"),
+                 transport=self.transport)
+        self.assertIn("no.such.verb", str(cm.exception))
+
+    def test_the_engine_names_neither_transport_nor_runner(self):
+        src = inspect.getsource(machines.engine)
+        self.assertNotIn("machines.transport", src)
+        self.assertNotIn("machines.runner", src)
+
+
 class Order(unittest.TestCase):
     def test_a_concurrent_last_step_is_reported_with_its_peers(self):
         m = _machine(None, states={

@@ -959,12 +959,20 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
 - **`may_send` still lists the folded state's offers when `legal` is false.** They are what
   the state offers, not a permission; read `legal` first. Each offer names a guard without
   evaluating it, because no message exists yet.
-- **`effects` is one unclassified tuple of `Effect` values**, each a verb and its typed
-  arguments, not a rendered string. It carries the effects of the transition the gate
-  would fire, or of the last transition the fold fired. The framework's design promises a
-  `transport` / `agent` split. What classifies a verb is the transport declaration, which is
-  cycle C, so the split waits and `effects` stays one tuple until it exists. It is empty
-  when no transition has fired yet (`verdict()`) and on every refusal from `gate()`.
+- **`effects` is one tuple of `Effect` values**, each a verb and its typed arguments, not a
+  rendered string, every effect in declared order. It carries the effects of the transition
+  the gate would fire, or of the last transition the fold fired. It is empty when no
+  transition has fired yet (`verdict()`) and on every refusal from `gate()`.
+- **`transport_effects` and `agent_effects` split `effects` by performer.** `verdict(m, trace,
+  transport=t)` and `gate(m, trace, outbound, transport=t)` read `t.verbs[verb].performer`
+  for each effect: `transport` goes to `transport_effects`, `agent` to `agent_effects`. The
+  two partition `effects` and each keeps its order, so a transition whose effects interleave
+  the performers yields two interleaved-then-separated tuples. With no `transport` both are
+  `()`. An effect whose verb the transport does not declare raises `ValueError` naming the
+  verb: `check_machine(m, verbs=t.verbs)` would have refused that machine, so it is a caller's
+  error, and no partial split is returned. The engine still performs neither list, and
+  imports neither `machines.transport` nor `machines.runner`; it reads attributes of the
+  object it is handed.
 - **`order` and `concurrent_with` describe the last fired transition, not the last message.**
   A refused message leaves them alone, and with no transition fired they are `ok` and
   empty. From `gate()` they are always `ok` and empty: an outbound clock is stamped above

@@ -30,7 +30,7 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   register as it stood **before** the arriving message was folded in, and a guard whose
   field is absent from the message is **false**, never an error.
 - **The verdict** names the state, the `holder`, `accepting`, `terminal`, `may_send`,
-  `remaining`, `effects`, `order`, `concurrent_with`, every guard reading, every world read,
+  `remaining`, `effects` (with its `transport_effects` and `agent_effects` split), `order`, `concurrent_with`, every guard reading, every world read,
   the outbound clock, every refusal, and whether the fold was `truncated`.
 - **`legal` answers two questions.** From `verdict()` it means *this trace is a legal run*,
   and it is false when the fold refused any message; `reason` names the first refusal. It
@@ -54,9 +54,12 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   summed.
 - **The gate** refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
   `terminal state`, `ambiguous`, and the truncation refusal.
-- **`effects` is one unclassified tuple.** The spec promises a `transport` / `agent` split;
-  what classifies a verb is the transport declaration, which is a later cycle, so the split
-  waits. It is empty when no transition has fired and on every refusal from `gate()`; and
+- **`effects` is every effect, in one tuple; `transport_effects` and `agent_effects` split it.**
+  Pass `transport=` to `verdict()` or `gate()` and each effect lands in the list for the
+  performer its verb declares, in declared order (the two lists partition `effects`); without a
+  transport both are empty, and an effect naming a verb the transport does not declare raises
+  `ValueError`. The engine still performs neither list and imports neither `machines.transport`
+  nor `machines.runner`. `effects` is empty when no transition has fired and on every refusal from `gate()`; and
   `order` and `concurrent_with` describe the last fired transition, not the last message
   (from `gate()` they are always `ok` and empty).
 - **The fold has an engine-side limit** (by default 10,000 messages, refused ones included;
