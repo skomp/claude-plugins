@@ -16,7 +16,7 @@ declaring an extra argument:
                  nothing and waits for it
   exit-3         prints a valid ok envelope, then exits 3
   not-json, extra-key, both, ok-not-bool, ok-only, not-object,
-  error-not-string
+  error-not-string, deep-json
                  malformed envelopes, one cause each
   body           channel.list returns one message with a "body" key added
   refuse         prints {"ok": false, "error": "refused"}
@@ -41,6 +41,8 @@ MALFORMED = {
     "ok-only": json.dumps({"ok": True}),
     "not-object": json.dumps([{"ok": True, "result": {}}]),
     "error-not-string": json.dumps({"ok": False, "error": 3}),
+    # json.loads raises RecursionError on this, not ValueError.
+    "deep-json": "[" * 100000,
 }
 
 

@@ -91,7 +91,7 @@ def _check_call(transport, verb, args):
 def _envelope(out, entry):
     try:
         answer = json.loads(out.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as e:
+    except (UnicodeDecodeError, ValueError, RecursionError) as e:
         raise TransportCannotRun("%s answered with something that is not "
                                  "JSON: %s" % (entry, e))
     if not isinstance(answer, dict):
@@ -126,28 +126,14 @@ def _kill(proc):
     proc.wait()
 
 
-def call(transport, verb, channel, args, timeout=CALL_TIMEOUT_SECONDS,
-         max_output=MAX_OUTPUT_BYTES):
-    """Perform one verb. Returns the envelope exactly: {"ok": True,
-    "result": ...} or {"ok": False, "error": str}. A bound that is hit is
-    {"ok": False, "error": ...} naming the bound, and the process group is
-    killed. Raises ValueError before spawning anything if the call does not
-    match the declaration, and TransportCannotRun if the transport could not
-    run."""
-    _check_call(transport, verb, args)
-    entry = os.path.join(transport.root, _ENTRY)
-    payload = json.dumps({"channel": channel, "args": args}).encode("utf-8")
-    deadline = time.monotonic() + timeout
-    try:
-        proc = subprocess.Popen([entry, verb], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL,
-                                start_new_session=True)
-    except OSError as e:
-        raise TransportCannotRun("%s could not run: %s" % (entry, e))
-    if _on_spawn is not None:
-        _on_spawn(proc.pid)
+def _close(proc):
+    for stream in (proc.stdin, proc.stdout):
+        stream.close()
 
+
+def _exchange(proc, payload, deadline, max_output):
+    """Write the call, read the answer, wait for the exit, all under one
+    deadline. Returns (stdout bytes, the bound hit or None)."""
     out = bytearray()
     bound = None
     with selectors.DefaultSelector() as sel:
@@ -187,10 +173,42 @@ def call(transport, verb, channel, args, timeout=CALL_TIMEOUT_SECONDS,
             proc.wait(max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             bound = "timeout"
+    return out, bound
+
+
+def call(transport, verb, channel, args, timeout=CALL_TIMEOUT_SECONDS,
+         max_output=MAX_OUTPUT_BYTES):
+    """Perform one verb. Returns the envelope exactly: {"ok": True,
+    "result": ...} or {"ok": False, "error": str}. A bound that is hit is
+    {"ok": False, "error": ...} naming the bound, and the process group is
+    killed. Raises ValueError before spawning anything if the call does not
+    match the declaration, and TransportCannotRun if the transport could not
+    run."""
+    _check_call(transport, verb, args)
+    entry = os.path.join(transport.root, _ENTRY)
+    payload = json.dumps({"channel": channel, "args": args}).encode("utf-8")
+    deadline = time.monotonic() + timeout
+    try:
+        proc = subprocess.Popen([entry, verb], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+    except OSError as e:
+        raise TransportCannotRun("%s could not run: %s" % (entry, e))
+    # From here the publisher's process group is running. Whatever escapes
+    # (an error, a KeyboardInterrupt, which with start_new_session=True a
+    # terminal Ctrl-C does not deliver to the group) kills the group first.
+    try:
+        if _on_spawn is not None:
+            _on_spawn(proc.pid)
+        out, bound = _exchange(proc, payload, deadline, max_output)
+    except BaseException:
+        _kill(proc)
+        _close(proc)
+        raise
     if bound is not None:
         _kill(proc)
-        for stream in (proc.stdin, proc.stdout):
-            stream.close()
+        _close(proc)
         if bound == "timeout":
             return {"ok": False, "error": "%s %s took longer than the "
                     "timeout of %s seconds" % (entry, verb, timeout)}

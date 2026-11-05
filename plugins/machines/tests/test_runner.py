@@ -139,7 +139,8 @@ class CannotRun(unittest.TestCase):
 
     def test_each_malformed_envelope_cannot_run(self):
         for channel in ("not-json", "extra-key", "both", "ok-not-bool",
-                        "ok-only", "not-object", "error-not-string"):
+                        "ok-only", "not-object", "error-not-string",
+                        "deep-json"):
             with self.subTest(channel=channel):
                 with self.assertRaises(TransportCannotRun):
                     call(FAKE, "channel.list", channel, {})
@@ -191,18 +192,42 @@ def _group_members(pgid):
     return members
 
 
-class BoundsHit(unittest.TestCase):
+def _kill_leftovers(pgids):
+    # Only matters when the runner is broken (a mutation run): do not leave
+    # its `sleep 30` behind.
+    for pgid in pgids:
+        try:
+            os.killpg(pgid, 9)
+        except ProcessLookupError:
+            pass
+
+
+class _GroupWatch(unittest.TestCase):
+    """Records the pgid of every spawn; no tests of its own."""
+
     def setUp(self):
         self.pgids = []
+        self.addCleanup(_kill_leftovers, self.pgids)
         patcher = mock.patch.object(runner, "_on_spawn", self.pgids.append)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def assertGroupGone(self):
+        # A SIGKILLed member may still be dying, or a zombie until its new
+        # parent reaps it: allow it a second.
         self.assertEqual(len(self.pgids), 1)
-        with self.assertRaises(ProcessLookupError):
-            os.killpg(self.pgids[0], 0)
+        give_up = time.monotonic() + 1.0
+        while True:
+            try:
+                os.killpg(self.pgids[0], 0)
+            except ProcessLookupError:
+                return
+            if time.monotonic() > give_up:
+                self.fail("process group %d is still alive" % self.pgids[0])
+            time.sleep(0.05)
 
+
+class BoundsHit(_GroupWatch):
     def test_the_time_bound(self):
         start = time.monotonic()
         out = call(FAKE, "channel.list", "sleep", {}, timeout=SHORT)
@@ -247,13 +272,49 @@ class BoundsHit(unittest.TestCase):
         watcher = threading.Thread(target=watch)
         watcher.start()
         try:
-            out = call(FAKE, "channel.list", "child-sleeps", {}, timeout=1.5)
+            out = call(FAKE, "channel.list", "child-sleeps", {}, timeout=3)
         finally:
             done.set()
             watcher.join()
         self.assertEqual(out["ok"], False)
         self.assertIn("timeout", out["error"])
         self.assertGreaterEqual(max(seen), 2)
+        self.assertGroupGone()
+
+
+class Interrupted(_GroupWatch):
+    """Whatever escapes `call` after the spawn kills the group first."""
+
+    def test_an_error_after_the_spawn_kills_the_group(self):
+        def fail(pid):
+            self.pgids.append(pid)
+            raise RuntimeError("the hook broke")
+
+        with mock.patch.object(runner, "_on_spawn", fail):
+            with self.assertRaises(RuntimeError):
+                call(FAKE, "channel.list", "sleep", {})
+        self.assertGroupGone()
+
+    def test_a_keyboard_interrupt_kills_the_whole_group(self):
+        seen = []
+        pgids = self.pgids
+
+        class Interrupting(runner.selectors.DefaultSelector):
+            calls = 0
+
+            def select(self, timeout=None):
+                Interrupting.calls += 1
+                if Interrupting.calls == 1:
+                    return super().select(timeout)
+                time.sleep(1.5)  # long enough for `sleep` to be spawned
+                seen.append(_group_members(pgids[0]))
+                raise KeyboardInterrupt
+
+        with mock.patch.object(runner.selectors, "DefaultSelector",
+                               Interrupting):
+            with self.assertRaises(KeyboardInterrupt):
+                call(FAKE, "channel.list", "child-sleeps", {})
+        self.assertGreaterEqual(seen[0], 2)
         self.assertGroupGone()
 
 
