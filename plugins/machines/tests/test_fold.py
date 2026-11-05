@@ -6,7 +6,7 @@ from machines.envelope import Envelope, Message, Trace, load_trace
 from types import SimpleNamespace
 
 from machines.fold import MAX_FOLD_STEPS, candidates, fold
-from machines.machine import (FIELDS, Field, Guard, Machine, Register, State,
+from machines.machine import (FIELDS, Effect, Field, Guard, Machine, Register, State,
                               Transition, check_machine)
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -62,9 +62,9 @@ class FixtureFolds(unittest.TestCase):
              (3, "awaiting-triage", "concluded",
               "awaiting-triage", "conclusion", "responder", "concluded")])
         self.assertEqual(f.fired[0].transition.effects,
-                         ["label.add:session-relay:open"])
+                         [Effect("label.add", {"name": "session-relay:open"})])
         self.assertEqual(f.fired[3].transition.effects,
-                         ["label.remove:session-relay:open"])
+                         [Effect("label.remove", {"name": "session-relay:open"})])
 
     def test_the_paxos_fixture_folds_to_decided_and_remembers_the_ballot(self):
         m = _paxos()
@@ -179,9 +179,9 @@ class OtherRefusals(unittest.TestCase):
     def test_two_transitions_that_differ_only_in_effects_are_refused_as_ambiguous(self):
         m = _machine([
             Transition("a", "step", "r", "b", signal=True,
-                       effects=["label.add:one"]),
+                       effects=[Effect("label.add", {"name": "one"})]),
             Transition("a", "step", "r", "b", signal=True,
-                       effects=["label.add:two"])])
+                       effects=[Effect("label.add", {"name": "two"})])])
         # The checker now reports this shape (claude-plugins#51); a
         # hand-built Machine still reaches the fold, which is the backstop.
         self.assertTrue(any("nondeterministic" in p for p in check_machine(m)))

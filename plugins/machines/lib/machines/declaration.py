@@ -3,12 +3,13 @@ import yaml
 from .errors import DeclarationError
 from .machine import (FIELDS, REQUIRED, Machine, State, Transition, Field,
                        FIELD_TYPES, NAME, _MAX_PREFIX_LENGTH, Register, FOLDS,
-                       Guard, OP_ATOMS, CAP_SCOPES, ROLE_KINDS)
+                       Guard, OP_ATOMS, CAP_SCOPES, ROLE_KINDS, Effect, VERB)
 
 _FENCE = re.compile(r"^```machine[ \t]*\n(.*?)^```[ \t]*$", re.MULTILINE | re.DOTALL)
 
 _STATE_KEYS = {"name", "holder", "terminal", "accepting"}
 _TRANSITION_KEYS = {"from", "on", "by", "to", "signal", "effects", "guard"}
+_EFFECT_KEYS = {"verb", "args"}
 _REGISTER_KEYS = {"fold", "field", "on", "initial"}
 _GUARD_KEYS = {"field", "op", "register"}
 _CAP_KEYS = {"limit", "per"}
@@ -385,24 +386,56 @@ def _require_string(value, field, where=""):
     return value
 
 def _effects_field(raw):
-    """`effects` is an optional list of strings.
+    """`effects` is an optional list of mappings, each `{verb, args}`.
+
+    `verb` is required and must match `VERB`; `args` is optional and
+    defaults to `{}`, an `args` of `{}` meaning the same. Each argument
+    value is a string, an `int` or a `bool` -- never `None`, never a float
+    -- and keeps its Python type. Exactly those two keys are tolerated.
+
+    Shape only. Which verbs exist and what they take is `check_machine`'s.
 
     The bare-string case is called out separately because it is the one
-    that did not crash: `effects: escalate` is iterable, so the effect
-    vocabulary check walked it character by character and emitted eight
-    problems about `'e'`, `'s'`, `'c'`... -- eight wrong answers instead of
-    one right one. Same hazard as `kinds: "yes"`, same fix.
+    that did not crash: `effects: escalate` is iterable, and was walked
+    character by character. A string entry (the pre-A.2 shape) and a
+    non-mapping `args` are refused for the same reason.
     """
     if "effects" not in raw:
         return []
     effects = raw["effects"]
     if not isinstance(effects, list):
         raise DeclarationError(
-            "effects must be a list of strings, not %r" % (effects,),
+            "effects must be a list of mappings, not %r" % (effects,),
             field="effects")
-    for effect in effects:
-        _require_string(effect, "effects", "each entry of ")
-    return effects
+    return [_effect_entry(entry) for entry in effects]
+
+def _effect_entry(entry):
+    if not isinstance(entry, dict):
+        raise DeclarationError(
+            "each entry of effects must be a mapping with a verb and "
+            "optional args, not %r" % (entry,), field="effects")
+    _reject_unknown(entry, _EFFECT_KEYS, "an effect")
+    verb = _require_string(_require_present(entry, "verb", "effects"),
+                           "verb", "an effect's ")
+    if not VERB.match(verb):
+        raise DeclarationError(
+            "an effect's verb %r must be lower-case words joined by dots, "
+            "like 'label.add'" % (verb,), field="verb")
+    args = entry.get("args", {})
+    if not isinstance(args, dict):
+        raise DeclarationError(
+            "an effect's args must be a mapping, not %r" % (args,),
+            field="args")
+    for name, value in args.items():
+        if not isinstance(name, str):
+            raise DeclarationError(
+                "an effect's argument name must be a string, not %r"
+                % (name,), field="args")
+        if not isinstance(value, (str, int, bool)):
+            raise DeclarationError(
+                "argument %r of effect %r must be a string, an int or a "
+                "bool, not %r" % (name, verb, value), field="args")
+    return Effect(verb, args)
 
 def _guard_field(raw):
     """A transition's optional `guard`: a mapping with exactly the three

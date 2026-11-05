@@ -23,7 +23,7 @@ call it. Anything that wires the engine into a transport is a later cycle.
 `machines.engine.verdict(machine, trace)` reads a channel's recorded trace and answers
 *is this a legal run of this machine, and where does it stand?* `machines.engine.gate(machine,
 trace, outbound)` answers *may this outbound message be sent now?* Neither performs anything:
-`escalate`, in an effect list, is a word in a tuple.
+`escalate`, in a verdict's effects, is an `Effect` value in a tuple.
 
 - **The fold** walks the trace and produces the state, every declared register, what each
   role has spent against the cap, and every guard reading. A guard is read against its

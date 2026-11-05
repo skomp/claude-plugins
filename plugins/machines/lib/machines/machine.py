@@ -43,6 +43,17 @@ NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
 # ordering defined anywhere in the spec for one to compare against.
 FIELD_TYPES = ("int", "bool")
 
+# The types a verb's argument may carry. Not `FIELD_TYPES`: that governs a
+# message's header fields, which a guard compares arithmetically, and has
+# no string. A verb argument may be a string (a label name), so argument
+# types are their own vocabulary.
+ARG_TYPES = ("string", "int", "bool")
+
+# What a verb name may look like: lower-case words joined by dots
+# (`label.add`). Not `NAME`, which forbids a dot. This pins a shape only;
+# which verbs exist is a separate question.
+VERB = re.compile(r"^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$")
+
 # The closed set of values a role may bind to: the kind of participant
 # that fills the role. Closed for the same reason `FIELD_TYPES` is: an
 # open word (`human`, `bot`, ...) would let a publisher declare a role no
@@ -149,6 +160,35 @@ class Guard(object):
         self.field = field
         self.op = op
         self.register = register
+
+
+class Effect(object):
+    """A side effect a transition requires when it fires: a `verb` and
+    typed `args`, a dict of argument name to a `str`, `int` or `bool`.
+
+    This class only holds the shape. Whether the verb exists and takes
+    these arguments is `check_machine`'s question, not this class's.
+    """
+
+    def __init__(self, verb, args=None):
+        self.verb = verb
+        self.args = dict(args or {})
+
+    def __eq__(self, other):
+        return (isinstance(other, Effect) and self.verb == other.verb
+                and self.args == other.args
+                and all(type(self.args[k]) is type(other.args[k])
+                        for k in self.args))
+
+    def __ne__(self, other):
+        return not self == other
+
+    def __hash__(self):
+        return hash((self.verb, tuple(sorted(
+            (k, type(v).__name__, v) for k, v in self.args.items()))))
+
+    def __repr__(self):
+        return "Effect(%r, %r)" % (self.verb, self.args)
 
 
 class State(object):
@@ -384,6 +424,100 @@ _MAX_PREFIX_LENGTH = 400
 _MAX_CAP_SEARCH = 1_000_000
 
 
+# The verbs a machine may name, and the typed arguments each takes. Closed
+# on purpose: opening the vocabulary needs a transport declaration (cycle
+# C.1), and this table is what C.2 replaces. A structured effect is not
+# evidence the vocabulary opened.
+BUILTIN_VERBS = {
+    "label.add": {"name": "string"},
+    "label.remove": {"name": "string"},
+    "escalate": {},
+}
+
+
+# One test per word in ARG_TYPES, keyed by that word. Exact types, so the
+# order of ARG_TYPES does not matter: `isinstance(True, int)` is True, and
+# `type(True) is int` is not.
+_ARG_TYPE_TESTS = {
+    "string": lambda v: type(v) is str,
+    "int": lambda v: type(v) is int,
+    "bool": lambda v: type(v) is bool,
+}
+
+
+def _arg_type(value):
+    """The ARG_TYPES word `value` is, or its Python type name if none.
+
+    Reads ARG_TYPES, not a list of its own: a word added there with no
+    test in `_ARG_TYPE_TESTS` raises KeyError here, and a test pins it.
+    """
+    for word in ARG_TYPES:
+        if _ARG_TYPE_TESTS[word](value):
+            return word
+    return type(value).__name__
+
+
+def _effect_problems(effect):
+    """Every problem with one effect, each as its own string."""
+    if not isinstance(effect, Effect):
+        return ["effect %r is not an Effect" % (effect,)]
+    declared = BUILTIN_VERBS.get(effect.verb)
+    if declared is None:
+        return ["effect verb %r is not in the vocabulary (%s)"
+                % (effect.verb, ", ".join(sorted(BUILTIN_VERBS)))]
+    problems = []
+    for name in sorted(effect.args):
+        if name not in declared:
+            problems.append("effect %r has an argument %r that the verb "
+                            "does not declare" % (effect.verb, name))
+    for name in sorted(declared):
+        if name not in effect.args:
+            problems.append("effect %r is missing the argument %r"
+                            % (effect.verb, name))
+            continue
+        arrived = _arg_type(effect.args[name])
+        if arrived != declared[name]:
+            problems.append(
+                "effect %r argument %r is declared %s, but %r (%s) arrived"
+                % (effect.verb, name, declared[name], effect.args[name],
+                   arrived))
+        elif declared[name] == "string" and effect.args[name] == "":
+            # The right type, so not the message above: an empty string is
+            # a string. The old `label.add:` check rejected it, and a
+            # type-only check would have dropped that silently.
+            problems.append("effect %r argument %r is an empty string; a "
+                            "string argument must not be empty"
+                            % (effect.verb, name))
+    return problems
+
+
+def _repeat_key(obj):
+    """A hashable key for `obj` built from its own fields, so that a field
+    added to `Transition`, `Guard` or `Effect` is part of "declared twice"
+    without anyone remembering to add it here (claude-plugins#55).
+
+    **Limit: this reads `vars(obj)`, the instance `__dict__`.** Every
+    attribute set on an instance is in the key, which is what closes the
+    trap. A class that declares `__slots__` has no `__dict__` and would be
+    keyed on nothing, and a class-level attribute is not in `vars()` of an
+    instance either: both would be skipped silently, and two rivals
+    differing only there would be reported as "declared twice". None
+    exists today. Whoever adds `__slots__` to `Transition`, `Guard` or
+    `Effect` must change this function first.
+
+    Values carry their type name: `1` and `True` compare equal in Python,
+    and an `int` argument is not a `bool` one.
+    """
+    if isinstance(obj, (list, tuple)):
+        return tuple(_repeat_key(v) for v in obj)
+    if isinstance(obj, dict):
+        return tuple(sorted((k, _repeat_key(v)) for k, v in obj.items()))
+    if hasattr(obj, "__dict__"):
+        return (type(obj).__name__, tuple(
+            (k, _repeat_key(v)) for k, v in sorted(vars(obj).items())))
+    return (type(obj).__name__, obj)
+
+
 def prefix_problem(prefix):
     """Check a prefix pattern for whether a `Machine` can actually use it:
     whether it is short enough, and whether it will compile.
@@ -500,16 +634,7 @@ def check_machine(m):
 
     for t in m.transitions:
         for effect in t.effects:
-            if effect == "escalate":
-                continue
-            prefix = next(
-                (p for p in ("label.add:", "label.remove:") if effect.startswith(p)),
-                None,
-            )
-            if prefix is None or len(effect) == len(prefix):
-                problems.append("effect %r is not in the vocabulary "
-                                "(label.add:<name>, label.remove:<name>, escalate)"
-                                % effect)
+            problems.extend(_effect_problems(effect))
 
     terminals = set(n for n, s in m.states.items() if s.terminal)
     accepting = set(n for n, s in m.states.items() if s.accepting)
@@ -592,9 +717,7 @@ def check_machine(m):
         members = []
         seen = set()
         for t in groups[trigger]:
-            key = (t.to, t.signal, tuple(t.effects),
-                   None if t.guard is None
-                   else (t.guard.field, t.guard.op, t.guard.register))
+            key = _repeat_key(t)
             if key in seen:
                 problems.append(
                     "transition from %r on %r by %r to %r is declared "

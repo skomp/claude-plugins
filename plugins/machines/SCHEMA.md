@@ -14,8 +14,8 @@ means something specific to it, stated in its own section below.
 
 **Every type in this document is enforced, and every failure names the field.** A field
 documented as a string must be a string; `roles` must be a mapping; each `states` and
-`transitions` entry must be a mapping with its required sub-fields present; `kinds` and
-`effects` must be lists of strings. A declaration that gets one of those wrong is told
+`transitions` entry must be a mapping with its required sub-fields present; `kinds` must
+be a list of strings, and `effects` a list of mappings (see `effects`, below). A declaration that gets one of those wrong is told
 which field, by name, before anything else looks at it. Nothing a publisher can write in a
 machine block reaches you as a Python traceback — a crash reported as a finding would be a
 checker telling you your machine is broken when it is the checker that broke.
@@ -711,20 +711,68 @@ Each entry is a transition, with these fields:
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
   are held to the same rule. More than one can fire on one trigger and nothing declared
   says which, whether or not `effects` are involved (each may, for example, require its own
-  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — same
-  `to`, `signal`, `effects` and guard — is reported too, as declared twice. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
+  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — the same
+  value in every field, including its guard and its effects — is reported too, as declared twice. The test is derived from
+  the fields a transition, a guard and an effect actually carry, not from a hand-written list
+  of them, so a field added later is part of it without anyone remembering to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
   message that matches both as `ambiguous`, so a machine that passed with a repeat would have
   a step it can never take. Delete the repeat.
 - **`signal`** (boolean, optional, default: `false`) — whether firing this transition emits a
   signal to a peer, as opposed to a purely local move. If present, must be an actual boolean;
   see "Scalars mean what you wrote" above — `signal: yes` is rejected, not silently accepted
   as true.
-- **`effects`** (list of strings, optional, default: empty list) — side effects to apply when
-  this transition fires. `check_machine` restricts every entry to the fixed vocabulary
-  `label.add:<name>`, `label.remove:<name>` and `escalate` — nothing else. This is what
-  keeps the declaration inert data rather than a program: an unvalidated effect such as
-  `run:curl ...` would be an instruction, and an engine that later grew to honour it would be
-  executing a stranger's command.
+- **`effects`** (list of effect mappings, optional, default: empty list) — what the protocol
+  requires when this transition fires. Something else performs it; the engine never does.
+  An effect is a verb and its typed arguments:
+
+  ```yaml
+  effects:
+    - verb: label.add
+      args: { name: "session-relay:open" }
+    - verb: escalate
+  ```
+
+  An entry has **two keys at most, `verb` and `args`**; any other key is rejected by name.
+  **`verb`** is required, a string, and a lowercase name that may be dotted (`label.add`, or
+  `escalate` with no dot). It has its own pattern and not the one `fields` uses, because that
+  one forbids a `.` and some verbs have one, so a verb needs a pattern that permits a dotted
+  name and does not require it. **`args`** is optional and defaults to an empty mapping: leaving it out and writing
+  `args: {}` mean the same, which is why `escalate` needs no `args`. `args: null` is refused,
+  not read as empty. An argument's value is never defaulted. A string entry such as
+  `label.add:session-relay:open` is refused: a string cannot carry a verb with two arguments
+  without an escaping grammar, and that very label already contains a colon.
+
+  **An argument is a `string`, an `int` or a `bool`.** This is its own list of types and not
+  the list `fields` uses. A message's header field is `int` or `bool` only, because a guard
+  has to order or compare it and nothing defines a string ordering (see `fields`, above). An
+  effect argument is never compared by a guard. It is data handed to whatever performs the
+  effect, and a label name is a string, so here a string is required and a header field may
+  not be one.
+
+  `check_machine` validates every effect against a built-in table of verbs:
+
+  | Verb | Arguments |
+  |---|---|
+  | `label.add` | `name`: string |
+  | `label.remove` | `name`: string |
+  | `escalate` | none |
+
+  It reports a verb not in the table, an argument the verb does not declare, a declared
+  argument that is missing, and an argument of the wrong type. A `bool` where an `int` is
+  declared is a wrong type, even though Python considers `True` an `int`. An empty string
+  where a string is declared is reported as its own problem, not as a wrong type: it is the
+  right type and still not a usable name. A string of only whitespace is accepted.
+
+  **The vocabulary is still the framework's three verbs.** This shape changed what an effect
+  looks like, not which effects exist. A structured effect is not evidence that the
+  vocabulary opened. Opening it needs a transport declaration (cycle C.1), and the built-in
+  table above is what cycle C.2 replaces with the verbs a transport declares.
+
+  The shape is closed so that the declaration stays inert data rather than a program: an
+  unvalidated effect such as `run:curl ...` would be an instruction, and an engine that later
+  grew to honour it would be executing a stranger's command. A verb and typed arguments the
+  checker has validated against a fixed table can name only something the framework already
+  offers.
 - **`guard`** (mapping, optional) — a restriction on whether this transition fires: one
   declared header field, compared to one declared register's remembered value, by one
   operator. Exactly three keys, all required, no others tolerated:
@@ -806,8 +854,8 @@ does with one. The engine is a library: `machines.fold.fold` walks a trace,
 `machines.engine.verdict(machine, trace)` turns the fold into a verdict, and
 `machines.engine.gate(machine, trace, outbound)` answers whether one outbound message may be
 sent. `bin/machines-check` does not call it. **The engine performs nothing.** It emits a
-verdict, never a message and never an effect; `escalate` in an `effects` list is a word in a
-tuple.
+verdict, never a message and never an effect; `escalate` in a verdict's `effects` is an
+`Effect` value in a tuple, data for something else to perform.
 
 ### The fold
 
@@ -843,10 +891,11 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
 - **`may_send` still lists the folded state's offers when `legal` is false.** They are what
   the state offers, not a permission; read `legal` first. Each offer names a guard without
   evaluating it, because no message exists yet.
-- **`effects` is one unclassified tuple.** It carries the effects of the transition the gate
+- **`effects` is one unclassified tuple of `Effect` values**, each a verb and its typed
+  arguments, not a rendered string. It carries the effects of the transition the gate
   would fire, or of the last transition the fold fired. The framework's design promises a
   `transport` / `agent` split. What classifies a verb is the transport declaration, which is
-  cycle C, so the split waits and `effects` stays one list until it exists.
+  cycle C, so the split waits and `effects` stays one tuple until it exists.
 
 ### `remaining`
 
