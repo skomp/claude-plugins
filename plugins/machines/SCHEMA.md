@@ -849,6 +849,64 @@ Each entry is a transition, with these fields:
 Any field on a transition entry other than `from`, `on`, `by`, `to`, `signal`, `effects` and
 `guard` is rejected by name.
 
+## The transport declaration
+
+A machine says what it needs done (`effects`) and the transport says what can be done. The
+transport declaration is `transport/transport.yaml`, beside the publisher's code. It is YAML
+loaded with the same `MachineSafeLoader` as a machine (so `total_order: yes` is the string
+`"yes"`, not `true`), and parsed in the same closed-language way: every key is known, an
+unknown key is refused by name, and nothing in it is an expression. It is data so that an
+installer can show a user what a transport claims to do without importing the transport's code
+first. `machines.transport.parse_transport(text)` and `load_transport(path)` read it and raise
+`TransportError` (a `DeclarationError`, with `.field` naming the key) for anything refused.
+
+```yaml
+transport: github-issues     # NAME-shaped
+version: v1                  # string
+channel:
+  total_order: true          # required, a real bool, no default
+  id: "a GitHub issue URL"   # optional prose for the consent screen; never interpreted
+verbs:
+  channel.list:
+    touches: channel-read
+    performer: transport
+    args: {}                 # required, may be empty
+    returns: messages
+  channel.append:
+    touches: channel-write
+    performer: transport
+    args: { body: string }
+  escalate:
+    touches: world-write
+    performer: agent
+    args: {}
+```
+
+- **Top level:** exactly `transport`, `version`, `channel`, `verbs`, all required. `run`, `cmd`
+  and `shell` are not special: the entry point is fixed, so the declaration has nowhere to put a
+  command, and they are unknown keys like any other.
+- **`channel`:** exactly `total_order` and `id`. `total_order` is required, has no default (the
+  engine behaves differently for each value, and guessing would pick one silently), and must be
+  a real `true` or `false`: `yes` and the quoted string `"true"` are refused. `id` is optional.
+- **`verbs`:** a non-empty mapping. Each verb name matches the same pattern as an effect's verb.
+  Each entry has exactly `touches` (one of `channel-read`, `channel-write`, `world-read`,
+  `world-write`), `performer` (`transport` or `agent`), `args` and `returns`.
+- **`args`:** a mapping of argument name to one of `string`, `int`, `bool`. Required; `{}` is
+  how a verb says it takes none. A type word outside those three is refused, naming the word
+  and the verb.
+- **`returns`:** required on a `channel-read` verb and refused on any other. Its one value is
+  `messages`.
+- **Required verbs:** exactly one `channel-read` verb, named `channel.list`, with
+  `returns: messages` and `performer: transport`; and a `channel.append` with
+  `touches: channel-write` and `performer: transport`. A transport with no way to read its
+  channel is not a transport, and the runner needs one name to call.
+- **An `agent` verb may not touch the channel.** `performer: agent` with `channel-read` or
+  `channel-write` is refused: the channel is the transport's to read and write. This rule is
+  not in the design spec; it is the maintainers' call.
+
+This section describes the parser only. Nothing yet checks a machine's effects against a
+transport, and nothing yet runs one.
+
 ## What the engine does with a declaration
 
 Everything above says what a declaration *is*. This section says what the engine, cycle B,

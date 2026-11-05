@@ -1,0 +1,35 @@
+# A fake transport for tests. It declares the verbs session-relay uses.
+# `escalate` has `args: {}` here although spec section 6 gives it
+# `reason: string`: both shipped machine fixtures write `escalate` with no
+# arguments, and a declared default is refused (spec section 13.5).
+transport: transport-fake
+version: v1
+channel:
+  total_order: true
+  id: "a fake channel, for tests"
+verbs:
+  channel.list:
+    touches: channel-read
+    performer: transport
+    args: {}
+    returns: messages
+  channel.append:
+    touches: channel-write
+    performer: transport
+    args: { body: string }
+  signal.send:
+    touches: channel-write
+    performer: transport
+    args: { to: string, text: string }
+  label.add:
+    touches: world-write
+    performer: transport
+    args: { name: string }
+  label.remove:
+    touches: world-write
+    performer: transport
+    args: { name: string }
+  escalate:
+    touches: world-write
+    performer: agent
+    args: {}

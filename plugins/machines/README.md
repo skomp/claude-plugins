@@ -128,6 +128,13 @@ the prefix to letters, digits, spaces, `:` and `-`. `SCHEMA.md` carries the whol
 (`on: yes` is exactly the kind of word this catches) — this parser narrows that resolution to
 `true`/`false` only, so a state or role named `no` stays the string you wrote.
 
+## The transport declaration
+
+`machines.transport.parse_transport` and `load_transport` read a `transport/transport.yaml`,
+the closed-language list of verbs an installed transport can perform. It is parsed, not run:
+nothing in it is executed. Nothing yet checks a machine's effects against it. `SCHEMA.md`'s
+"The transport declaration" has the rules.
+
 ## The checker
 
 `bin/machines-check <path>...` — each path is a declaration file directly, or a directory
