@@ -99,6 +99,13 @@ only ever passed is not evidence. Cycle B found two tests that could not fail â€
 invariance test folded a trace with no refusals in it, so the fields it compared were empty on
 both sides.
 
+**Record the target test's own verbatim `FAIL:`/`ERROR:` line, not a count.** Cycle C, 2026-11-05:
+commit bodies that said "failures=60, the target among them" were sent back twice, and the
+final review then found two parser tests that no mutation could fail. `spec.get("touches")`
+survived because the next membership check refused the `None` with the same `.field`, and the
+test checked only the field. A test of "X is required" must assert the *missing* wording, or it
+cannot tell a missing key from an invalid one.
+
 **The trap that makes a mutation lie to you, measured on 2026-10-26.** A same-size edit that is
 restored within the same second lets Python reuse the `.pyc` of the mutated code, so the test
 keeps failing after you put the file back and you conclude the restore failed. `touch` the file
