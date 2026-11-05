@@ -751,30 +751,35 @@ Each entry is a transition, with these fields:
   effect, and a label name is a string, so here a string is required and a header field may
   not be one.
 
-  `check_machine` validates every effect against a built-in table of verbs:
+  `check_machine(m, verbs)` validates every effect against the verbs a transport declares
+  (`verbs` is a transport's `verbs` table; see "The transport declaration"). It reports a verb
+  the transport does not declare, an argument the verb does not declare, a declared argument
+  that is missing, and an argument of the wrong type. A `bool` where an `int` is declared is a
+  wrong type, even though Python considers `True` an `int`. An empty string where a string is
+  declared is reported as its own problem, not as a wrong type: it is the right type and still
+  not a usable name. A string of only whitespace is accepted.
 
-  | Verb | Arguments |
-  |---|---|
-  | `label.add` | `name`: string |
-  | `label.remove` | `name`: string |
-  | `escalate` | none |
+  **Without a transport, effects are not validated.** `check_machine(m)` with no `verbs`
+  skips this check and runs every other one: no vocabulary is built in, so there is nothing to
+  validate a verb against, and a machine naming a verb nobody declared passes. `machines-check`
+  says so on every run that has no `--transport`: `Effect vocabulary not checked: no
+  --transport given`. A clean report without that line means the effects were checked; with it,
+  they were not. With `--transport`, every effect whose verb touches `world-read` or
+  `world-write` is also printed, as `<machine>@<version>: effect <verb> touches <touches>`, so
+  an installer can show what the machine can do to the world. These lines are disclosures, not
+  problems, and never change the exit code.
 
-  It reports a verb not in the table, an argument the verb does not declare, a declared
-  argument that is missing, and an argument of the wrong type. A `bool` where an `int` is
-  declared is a wrong type, even though Python considers `True` an `int`. An empty string
-  where a string is declared is reported as its own problem, not as a wrong type: it is the
-  right type and still not a usable name. A string of only whitespace is accepted.
+  **This removed something.** Until cycle C the checker accepted exactly `label.add`,
+  `label.remove` and `escalate`, and rejected every other verb. Now a verb is accepted if the
+  transport declares it, and with no transport nothing is rejected on its verb. A machine that
+  relied on the old three needs a transport that declares them with the same arguments:
+  `name: string` for the two label verbs, and `escalate` with `args: {}`.
 
-  **The vocabulary is still the framework's three verbs.** This shape changed what an effect
-  looks like, not which effects exist. A structured effect is not evidence that the
-  vocabulary opened. Opening it needs a transport declaration (cycle C.1), and the built-in
-  table above is what cycle C.2 replaces with the verbs a transport declares.
-
-  The shape is closed so that the declaration stays inert data rather than a program: an
-  unvalidated effect such as `run:curl ...` would be an instruction, and an engine that later
-  grew to honour it would be executing a stranger's command. A verb and typed arguments the
-  checker has validated against a fixed table can name only something the framework already
-  offers.
+  The shape stays closed so that the declaration is inert data rather than a program: an effect
+  is a verb name and typed arguments, never a command string such as `run:curl ...`, and the
+  engine performs nothing. What a verb *means* is the transport's, and the transport is
+  checked separately; this checker validates only that the machine's effects fit what the
+  transport declared.
 - **`guard`** (mapping, optional) — a restriction on whether this transition fires: one
   declared header field, compared to one declared register's remembered value, by one
   operator. Exactly three keys, all required, no others tolerated:
@@ -904,8 +909,8 @@ verbs:
   `channel-write` is refused: the channel is the transport's to read and write. This rule is
   not in the design spec; it is the maintainers' call.
 
-This section describes the parser only. Nothing yet checks a machine's effects against a
-transport, and nothing yet runs one.
+`machines-check --transport` checks a machine's effects against a transport's verbs (see
+`effects`, above). Nothing yet runs a transport.
 
 ## What the engine does with a declaration
 

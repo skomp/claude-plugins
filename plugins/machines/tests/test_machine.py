@@ -1,11 +1,17 @@
 import unittest
+from pathlib import Path
+
 import machines.machine as machine_module
 from machines.declaration import parse
 from machines.machine import (Machine, State, Transition, check_machine,
                                Effect, Guard, _repeat_key,
                                _MAX_PREFIX_LENGTH)
+from machines.transport import Verb, load_transport
 from tests.test_declaration import VALID  # the known-good declaration
 from tests.test_guards import GUARDED  # the known-good guarded declaration
+
+FIXTURE_VERBS = load_transport(
+    str(Path(__file__).parent / "fixtures" / "transport-fake" / "transport")).verbs
 
 DECLARED_SHARED = """\
 ```machine
@@ -151,7 +157,7 @@ class TestCheckMachine(unittest.TestCase):
 
     def test_an_effect_outside_the_vocabulary_is_reported(self):
         m = mutate(self.ESC, "{ verb: run, args: { cmd: curl } }")
-        problems = check_machine(m)
+        problems = self._check(m)
         self.assertTrue(any("'run'" in p and "label.add" in p
                             and "escalate" in p for p in problems), problems)
 
@@ -159,32 +165,32 @@ class TestCheckMachine(unittest.TestCase):
         for effect in ("{ verb: escalate }", "{ verb: escalate, args: {} }",
                        "{ verb: label.add, args: { name: anything } }",
                        "{ verb: label.remove, args: { name: anything } }"):
-            self.assertEqual(check_machine(mutate(self.ESC, effect)), [],
+            self.assertEqual(self._check(mutate(self.ESC, effect)), [],
                              effect)
 
     def test_an_argument_the_verb_does_not_declare_is_reported(self):
         m = mutate(self.ESC, "{ verb: escalate, args: { urgent: yes } }")
-        problems = check_machine(m)
+        problems = self._check(m)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("'urgent'", problems[0])
         self.assertIn("'escalate'", problems[0])
 
     def test_an_undeclared_extra_argument_is_reported_beside_a_valid_one(self):
         m = mutate(self.ESC, "{ verb: label.add, args: { name: a, extra: b } }")
-        problems = check_machine(m)
+        problems = self._check(m)
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("'extra'", problems[0])
 
     def test_a_declared_argument_that_is_missing_is_reported(self):
         for effect in ("{ verb: label.add }",
                        "{ verb: label.remove, args: {} }"):
-            problems = check_machine(mutate(self.ESC, effect))
+            problems = self._check(mutate(self.ESC, effect))
             self.assertEqual(len(problems), 1, (effect, problems))
             self.assertIn("'name'", problems[0])
 
     def test_an_empty_string_argument_is_reported_as_empty_not_as_wrong_type(self):
         for verb in ("label.add", "label.remove"):
-            problems = check_machine(mutate(
+            problems = self._check(mutate(
                 self.ESC, "{ verb: %s, args: { name: '' } }" % verb))
             self.assertEqual(len(problems), 1, problems)
             self.assertIn(repr(verb), problems[0])
@@ -200,7 +206,7 @@ class TestCheckMachine(unittest.TestCase):
         self.assertIn("'three'", problems[0])
 
     def test_an_int_where_string_is_declared_is_reported(self):
-        problems = check_machine(mutate(
+        problems = self._check(mutate(
             self.ESC, "{ verb: label.add, args: { name: 3 } }"))
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("'name'", problems[0])
@@ -225,42 +231,65 @@ class TestCheckMachine(unittest.TestCase):
         self.assertEqual(
             len(self._with_verb({"f": "bool"}, {"f": 1})), 1)
 
-    def test_the_vocabulary_is_not_opened_by_a_structured_effect(self):
-        self.assertEqual(sorted(machine_module.BUILTIN_VERBS),
-                         ["escalate", "label.add", "label.remove"])
+    def test_there_is_no_built_in_verb_table(self):
+        # The table C.2 deleted. Pinned so it cannot quietly return: the
+        # vocabulary is the transport's, passed in as `verbs=`.
+        self.assertFalse(hasattr(machine_module, "BUILTIN_VERBS"))
 
-    def test_every_builtin_type_word_is_one_the_checker_can_test(self):
-        for verb, declared in machine_module.BUILTIN_VERBS.items():
-            for name, word in declared.items():
-                self.assertIn(word, machine_module.ARG_TYPES,
-                              "%s.%s declares %r" % (verb, name, word))
+    def test_without_verbs_an_unknown_verb_is_not_validated(self):
+        # verbs=None: effect-vocabulary validation does not run (spec 13.1).
+        m = mutate(self.ESC, "{ verb: run, args: { cmd: curl } }")
+        self.assertEqual(check_machine(m), [])
+        self.assertEqual(check_machine(m, None), [])
 
-    def test_every_builtin_verb_name_matches_verb(self):
-        for verb in machine_module.BUILTIN_VERBS:
-            self.assertRegex(verb, machine_module.VERB)
+    def test_with_the_fixture_verbs_the_same_machine_is_reported(self):
+        m = mutate(self.ESC, "{ verb: run, args: { cmd: curl } }")
+        problems = check_machine(m, FIXTURE_VERBS)
+        self.assertTrue(any("'run'" in p for p in problems), problems)
+
+    def test_without_verbs_every_other_check_still_runs(self):
+        m = parse(VALID)
+        m.transitions[0].to = "nowhere"
+        self.assertTrue(any("nowhere" in p for p in check_machine(m)))
+
+    def test_without_verbs_a_malformed_effect_object_is_still_reported(self):
+        m = parse(VALID)
+        m.transitions[0].effects = ["escalate"]
+        self.assertTrue(any("is not an Effect" in p for p in check_machine(m)))
+
+    def test_both_machine_fixtures_check_clean_against_the_fixture_transport(self):
+        for name in ("valid-session-relay.md", "valid-paxos-acceptor.md"):
+            m = parse((Path(__file__).parent / "fixtures" / name).read_text())
+            self.assertEqual(check_machine(m, FIXTURE_VERBS), [], name)
+
+    def test_arg_types_are_the_type_words_the_fixture_transport_uses(self):
+        used = set()
+        for verb in FIXTURE_VERBS.values():
+            used.update(verb.args.values())
+        self.assertEqual(used, {"string"})  # the fixture uses only string
+        self.assertTrue(used <= set(machine_module.ARG_TYPES))
 
     def test_every_arg_type_word_has_a_test_and_names_a_value(self):
         samples = {"string": "x", "int": 1, "bool": True}
         self.assertEqual(sorted(machine_module.ARG_TYPES), sorted(samples))
         for word in machine_module.ARG_TYPES:
-            self.assertEqual(machine_module._arg_type(samples[word]), word)
+            self.assertEqual(machine_module.arg_type(samples[word]), word)
+
+    def test_arg_type_is_public_and_the_private_name_is_gone(self):
+        self.assertFalse(hasattr(machine_module, "_arg_type"))
+        self.assertEqual(machine_module.arg_type(1.5), "float")
+
+    def _check(self, m):
+        return check_machine(m, FIXTURE_VERBS)
 
     def _with_verb(self, declared, args):
-        """No built-in verb takes an int or a bool, so declare one here.
-
-        `probe` is a local fixture for argument types the three real verbs
-        do not have. It is restored in `finally`; it is not an opened
-        vocabulary, which `test_the_vocabulary_is_not_opened_by_a_structured_effect`
-        pins separately.
-        """
-        saved = dict(machine_module.BUILTIN_VERBS)
-        machine_module.BUILTIN_VERBS["probe"] = declared
-        try:
-            return check_machine(
-                self._machine_with_effect(Effect("probe", args)))
-        finally:
-            machine_module.BUILTIN_VERBS.clear()
-            machine_module.BUILTIN_VERBS.update(saved)
+        """The fixture transport has no verb taking an int or a bool, so
+        add a `probe` verb that does to a copy. Nothing is mutated: the table is passed as `verbs=`."""
+        verbs = dict(FIXTURE_VERBS)
+        verbs["probe"] = Verb("probe", "world-write", "transport",
+                              declared, None)
+        return check_machine(
+            self._machine_with_effect(Effect("probe", args)), verbs)
 
     @staticmethod
     def _machine_with_effect(effect):
@@ -342,8 +371,7 @@ class TestCheckMachine(unittest.TestCase):
             self.assertEqual(rivals(touch), [], touch.__name__)
 
     def test_an_int_argument_and_a_bool_one_are_not_a_repeat(self):
-        # "probe" is only a name on an Effect here; BUILTIN_VERBS is not
-        # touched and the checker is not run.
+        # "probe" is only a name on an Effect here; the checker is not run.
         self.assertNotEqual(_repeat_key(Effect("probe", {"n": 1})),
                             _repeat_key(Effect("probe", {"n": True})))
 

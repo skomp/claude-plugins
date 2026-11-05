@@ -8,6 +8,7 @@ from pathlib import Path
 from machines.cli import main
 from machines.declaration import parse
 from machines.registry import check_all
+from machines.transport import load_transport
 from tests.test_declaration import VALID
 
 
@@ -28,6 +29,52 @@ def published(name, publisher, prefix, version="v1"):
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+TRANSPORT = FIXTURES / "transport-fake" / "transport"
+NOT_CHECKED = "Effect vocabulary not checked: no --transport given"
+
+
+class TestVocabularyInCheckAll(unittest.TestCase):
+    def test_no_transport_means_not_checked_and_no_world_effects(self):
+        m = parse((FIXTURES / "valid-session-relay.md").read_text())
+        report = check_all([m])
+        self.assertFalse(report.vocabulary_checked)
+        self.assertEqual(report.world_effects, {})
+
+    def test_a_transport_means_checked(self):
+        m = parse((FIXTURES / "valid-session-relay.md").read_text())
+        report = check_all([m], load_transport(str(TRANSPORT)))
+        self.assertTrue(report.vocabulary_checked)
+        self.assertEqual(report.problems, {})
+
+    def test_an_unknown_verb_is_a_problem_only_with_a_transport(self):
+        text = (FIXTURES / "valid-session-relay.md").read_text()
+        m = parse(text.replace("verb: escalate", "verb: teleport"))
+        self.assertEqual(check_all([m]).problems, {})
+        problems = check_all([m], load_transport(str(TRANSPORT))).problems
+        self.assertEqual(list(problems), ["session-relay@v1"])
+        self.assertTrue(any("'teleport'" in p for p in problems["session-relay@v1"]))
+
+    def test_world_effects_list_every_world_touching_effect_sorted(self):
+        m = parse((FIXTURES / "valid-session-relay.md").read_text())
+        report = check_all([m], load_transport(str(TRANSPORT)))
+        self.assertEqual(report.world_effects, {"session-relay@v1": [
+            ("escalate", "world-write"),
+            ("label.add", "world-write"), ("label.add", "world-write"),
+            ("label.remove", "world-write"),
+            ("label.remove", "world-write")]})
+
+    def test_a_machine_with_no_world_effect_is_absent_from_world_effects(self):
+        m = parse((FIXTURES / "valid-paxos-acceptor.md").read_text())
+        report = check_all([m], load_transport(str(TRANSPORT)))
+        self.assertEqual(report.world_effects, {})
+
+    def test_a_channel_touching_verb_is_not_a_world_effect(self):
+        text = (FIXTURES / "valid-session-relay.md").read_text()
+        m = parse(text.replace("verb: escalate }",
+                               "verb: channel.append, args: { body: hi } }"))
+        report = check_all([m], load_transport(str(TRANSPORT)))
+        self.assertNotIn(("channel.append", "channel-write"),
+                         report.world_effects["session-relay@v1"])
 
 
 class TestCheckAll(unittest.TestCase):
@@ -382,6 +429,78 @@ class TestCli(unittest.TestCase):
         self.assertEqual(code, 0, out.getvalue())
         self.assertIn("Examined 2 machines", out.getvalue())
         self.assertIn("No collisions found", out.getvalue())
+
+    # --- the effect vocabulary, through the CLI (spec 7, 13.1)
+
+    def _run(self, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_without_transport_the_cli_says_the_vocabulary_was_not_checked(self):
+        code, out, _ = self._run([str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "Examined 1 machine")
+        self.assertEqual(lines[1], NOT_CHECKED)
+        self.assertNotIn("touches", out)
+
+    def test_with_transport_the_cli_does_not_say_it(self):
+        code, out, _ = self._run(["--transport", str(TRANSPORT),
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("not checked", out)
+
+    def test_with_transport_world_effects_are_disclosed_and_exit_0(self):
+        code, out, _ = self._run([str(FIXTURES / "valid-session-relay.md"),
+                                  "--transport", str(TRANSPORT)])
+        self.assertEqual(code, 0, out)
+        self.assertIn("session-relay@v1: effect escalate touches world-write",
+                      out.splitlines())
+        self.assertIn("session-relay@v1: effect label.add touches world-write",
+                      out.splitlines())
+
+    def test_the_transport_may_be_named_by_its_yaml_file(self):
+        code, out, _ = self._run(
+            ["--transport", str(TRANSPORT / "transport.yaml"),
+             str(FIXTURES / "valid-paxos-acceptor.md")])
+        self.assertEqual(code, 0, out)
+
+    def test_a_missing_transport_exits_2(self):
+        code, _, err = self._run(["--transport", "/nonexistent/transport",
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 2)
+        self.assertIn("/nonexistent/transport", err)
+
+    def test_transport_with_no_value_exits_2(self):
+        code, _, err = self._run([str(FIXTURES / "valid-session-relay.md"),
+                                  "--transport"])
+        self.assertEqual(code, 2)
+        self.assertIn("--transport", err)
+
+    def test_an_unparseable_transport_exits_1_with_the_path_and_the_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "transport.yaml")
+            with open(path, "w") as f:
+                f.write("transport: x\nversion: v1\n")
+            code, out, err = self._run(["--transport", d,
+                                        str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 1)
+        self.assertTrue((out + err).startswith(d + ": "), out + err)
+        self.assertIn("channel", out + err)
+
+    def test_an_unknown_verb_exits_1_when_a_transport_is_given(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "m.md")
+            with open(path, "w") as f:
+                f.write((FIXTURES / "valid-session-relay.md").read_text()
+                        .replace("verb: escalate", "verb: teleport"))
+            code, _, _ = self._run([path])
+            self.assertEqual(code, 0)
+            code, out, _ = self._run(["--transport", str(TRANSPORT), path])
+        self.assertEqual(code, 1)
+        self.assertIn("'teleport'", out)
 
 
 if __name__ == "__main__":

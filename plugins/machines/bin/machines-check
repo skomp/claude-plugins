@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# machines-check <path>...
+# machines-check [--transport <path>] <path>...
 #
 # Parses and checks the machine declarations named by each path (a
 # declaration file directly, or a directory to search for a SKILL.md), and
 # reports how many machines were examined, each one's own well-formedness,
 # and whether any two collide on the same prefix.
 #
+# --transport <path> (a transport.yaml, or a directory holding one) validates
+# every machine's effects against the transport's declared verbs. Without it
+# the effect vocabulary is not checked, and the output says so.
+#
 # Exit codes:
 #   0  every machine examined is well-formed and none collide
-#   1  the tool ran and found a problem: a bad declaration, or a collision
-#   2  the tool could not run at all: no paths given, python3 missing,
-#      PyYAML missing, or the interpreter itself is broken
+#   1  the tool ran and found a problem: a bad declaration, a collision, or
+#      a --transport that does not parse
+#   2  the tool could not run at all: no paths given, --transport unreadable,
+#      python3 missing, PyYAML missing, or the interpreter itself is broken
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

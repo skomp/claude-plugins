@@ -132,13 +132,21 @@ the prefix to letters, digits, spaces, `:` and `-`. `SCHEMA.md` carries the whol
 
 `machines.transport.parse_transport` and `load_transport` read a `transport/transport.yaml`,
 the closed-language list of verbs an installed transport can perform. It is parsed, not run:
-nothing in it is executed. Nothing yet checks a machine's effects against it. `SCHEMA.md`'s
+nothing in it is executed. `machines-check --transport` checks a machine's effects against
+it (see "The checker"). `SCHEMA.md`'s
 "The transport declaration" has the rules.
 
 ## The checker
 
-`bin/machines-check <path>...` — each path is a declaration file directly, or a directory
-to search for a `SKILL.md`. It parses every machine it finds, checks each one for
+`bin/machines-check [--transport <path>] <path>...` — each path is a declaration file
+directly, or a directory to search for a `SKILL.md`. `--transport` takes a `transport.yaml`
+or a directory holding one; with it, every machine's effects are checked against the verbs
+that transport declares, and each effect whose verb touches the world is printed as
+`<machine>@<version>: effect <verb> touches <touches>` (a disclosure, never a problem, never
+an exit code). **Without it the effect vocabulary is not checked, and the output says so:**
+`Effect vocabulary not checked: no --transport given`, on the line after `Examined N
+machines`. A `--transport` that cannot be read exits 2; one that does not parse exits 1 with
+the error, prefixed with the path. It parses every machine it finds, checks each one for
 well-formedness, and checks every pair of distinctly-named machines for a prefix collision
 — two protocols that could both claim the same message.
 
@@ -185,6 +193,7 @@ it was wrong — see `SCHEMA.md`'s "Accepting is not terminal".
 ```
 plugins/machines/bin/machines-check plugins/machines/tests/fixtures/valid-session-relay.md
 Examined 1 machine
+Effect vocabulary not checked: no --transport given
 ```
 
 **Three exit codes, not two:**
@@ -192,8 +201,8 @@ Examined 1 machine
 | Exit | Means |
 |---|---|
 | `0` | Every machine examined is well-formed and none collide |
-| `1` | The tool ran and found a problem — a bad declaration, or a collision |
-| `2` | The tool could not run at all — no paths given, a path that doesn't exist, PyYAML missing, or a broken interpreter |
+| `1` | The tool ran and found a problem — a bad declaration, a collision, or a `--transport` that does not parse |
+| `2` | The tool could not run at all — no paths given, a path (or `--transport`) that doesn't exist, PyYAML missing, or a broken interpreter |
 
 A tool that cannot run must never exit `1`: that code reads as "I checked, and found a
 problem," and a broken install is not a finding. `bin/machines-check` checks for `python3`

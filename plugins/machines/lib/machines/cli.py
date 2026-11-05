@@ -13,9 +13,18 @@ Three exit codes, not two:
   parse, `check_machine` found something wrong with it, or two machines
   collide. This is "I checked, and something is wrong."
 - `2` -- the tool could not run at all: no paths were given, a given path
-  does not exist or cannot be read, or PyYAML is missing. This is "I could
-  not check anything," and must never be confused with `1` -- a broken
-  install must not read as a passing or failing check.
+  does not exist or cannot be read, `--transport` names a path that cannot
+  be read or has no value, or PyYAML is missing. This is "I could not check
+  anything," and must never be confused with `1` -- a broken install must
+  not read as a passing or failing check.
+
+`--transport <path>` takes a `transport.yaml` or a directory containing one.
+With it, every machine's effects are validated against the transport's
+declared verbs, and each effect that touches the world is printed as a
+disclosure (never a problem, never an exit code). A transport that does not
+parse exits 1 with the error, prefixed with the path. Without it the effect
+vocabulary is not validated, and the output says so (spec 13.1): a silent
+skip would read as a pass that checked nothing.
 
 The `import yaml` needed to actually parse a declaration is deferred to
 inside `main`, after the argument checks, specifically so that importing
@@ -59,12 +68,41 @@ def _resolve_path(path):
     return None, "not a file or directory: %s" % path
 
 
+NOT_CHECKED = "Effect vocabulary not checked: no --transport given"
+
+
+def _split_args(argv):
+    """(transport_path_or_None, paths, error_or_None). `--transport` may
+    come anywhere; the last one given wins. It needs a value."""
+    transport_path = None
+    paths = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--transport":
+            if i + 1 >= len(argv):
+                return None, [], "--transport needs a path"
+            transport_path = argv[i + 1]
+            i += 2
+        else:
+            paths.append(argv[i])
+            i += 1
+    return transport_path, paths, None
+
+
 def main(argv):
+    transport_path, argv, arg_error = _split_args(argv)
+    if arg_error is not None:
+        sys.stderr.write("machines-check: %s\n" % arg_error)
+        return 2
     if not argv:
-        sys.stderr.write("usage: machines-check <path>...\n")
+        sys.stderr.write("usage: machines-check [--transport <path>] <path>...\n")
         sys.stderr.write(
             "  each <path> is a machine declaration file, or a directory "
             "to search for a SKILL.md\n"
+        )
+        sys.stderr.write(
+            "  --transport <path> is a transport.yaml, or a directory "
+            "holding one; without it the effect vocabulary is not checked\n"
         )
         return 2
 
@@ -78,6 +116,19 @@ def main(argv):
     from .declaration import parse
     from .errors import DeclarationError
     from .registry import check_all
+
+    transport = None
+    if transport_path is not None:
+        from .transport import TransportError, load_transport
+        try:
+            transport = load_transport(transport_path)
+        except TransportError as exc:
+            print("%s: %s" % (transport_path, exc))
+            return 1
+        except OSError as exc:
+            sys.stderr.write("machines-check: cannot read transport %s: %s\n"
+                             % (transport_path, exc))
+            return 2
 
     files = []
     for path in argv:
@@ -101,10 +152,13 @@ def main(argv):
         except DeclarationError as exc:
             load_problems[filepath] = str(exc)
 
-    report = check_all(machines)
+    report = check_all(machines, transport)
 
     print("Examined %d machine%s" % (
         report.examined, "" if report.examined == 1 else "s"))
+
+    if not report.vocabulary_checked:
+        print(NOT_CHECKED)
 
     for filepath in sorted(load_problems):
         print("%s: %s" % (filepath, load_problems[filepath]))
@@ -112,6 +166,10 @@ def main(argv):
     for name in sorted(report.problems):
         for msg in report.problems[name]:
             print("%s: %s" % (name, msg))
+
+    for name in sorted(report.world_effects):
+        for verb, touches in report.world_effects[name]:
+            print("%s: effect %s touches %s" % (name, verb, touches))
 
     if report.collisions:
         for a, b in report.collisions:
