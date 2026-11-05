@@ -113,7 +113,14 @@ def _classify(effects, transport):
         if verb is None:
             raise ValueError("effect names verb %r, which the transport "
                              "does not declare" % (e.verb,))
-        (by_agent if verb.performer == "agent" else by_transport).append(e)
+        if verb.performer == "transport":
+            by_transport.append(e)
+        elif verb.performer == "agent":
+            by_agent.append(e)
+        else:
+            raise ValueError("effect verb %r has performer %r, which is "
+                             "neither 'transport' nor 'agent'"
+                             % (e.verb, verb.performer))
     return tuple(by_transport), tuple(by_agent)
 
 

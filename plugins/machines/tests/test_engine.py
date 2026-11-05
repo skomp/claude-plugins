@@ -240,6 +240,16 @@ class TwoEffectLists(unittest.TestCase):
         v = gate(self.machine, _trace([]), _out("nope", "r", "x"),
                  transport=self.transport)
         self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        # every gate refusal path, with a machine whose transition has effects
+        loop = _loop(1, "channel")
+        for m, tr, out in (
+                (loop, _trace(_spend("r", "x", 1)), _out("step", "r", "x")),
+                (self.machine, self._one_step(), _out("step", "r", "x")),
+                (loop, _trace([]), _out("step", "s", "x"))):
+            v = gate(m, tr, out, transport=self.transport)
+            self.assertFalse(v.legal)
+            self.assertEqual((v.effects, v.transport_effects,
+                              v.agent_effects), ((), (), ()))
 
     def test_an_undeclared_verb_raises_value_error_naming_it(self):
         m = _machine(None, transitions=[
@@ -252,6 +262,48 @@ class TwoEffectLists(unittest.TestCase):
             gate(m, _trace([]), _out("step", "r", "x"),
                  transport=self.transport)
         self.assertIn("no.such.verb", str(cm.exception))
+
+    def test_a_performer_that_is_neither_raises_naming_verb_and_performer(
+            self):
+        class V(object):
+            performer = "robot"
+
+        class T(object):
+            verbs = {"escalate": V()}
+
+        m = _machine(None)
+        with self.assertRaises(ValueError) as cm:
+            verdict(m, self._one_step(), transport=T())
+        self.assertIn("escalate", str(cm.exception))
+        self.assertIn("robot", str(cm.exception))
+        with self.assertRaises(ValueError):
+            gate(m, _trace([]), _out("step", "r", "x"), transport=T())
+
+    def _assert_classified(self, v):
+        esc = Effect("escalate")
+        self.assertEqual(v.effects, (esc,))
+        self.assertEqual((v.transport_effects, v.agent_effects),
+                         ((), (esc,)))
+
+    def test_a_truncated_verdict_still_classifies_the_last_fired(self):
+        v = verdict(_loop(None, "channel"), _trace(_spend("r", "x", 50)),
+                    limit=10, transport=self.transport)
+        self.assertTrue(v.truncated)
+        self._assert_classified(v)
+
+    def test_a_refused_verdict_still_classifies_the_last_fired(self):
+        msgs = _spend("r", "x", 1) + [_msg("nope", "r", "x", 2)]
+        v = verdict(_loop(None, "channel"), _trace(msgs),
+                    transport=self.transport)
+        self.assertTrue(v.refusals)
+        self.assertIn("refused", v.reason)
+        self._assert_classified(v)
+
+    def test_an_overspent_verdict_still_classifies_the_last_fired(self):
+        v = verdict(_loop(2, "channel"), _trace(_spend("r", "x", 3)),
+                    transport=self.transport)
+        self.assertIn("cap exceeded", v.reason)
+        self._assert_classified(v)
 
     def test_the_engine_names_neither_transport_nor_runner(self):
         src = inspect.getsource(machines.engine)
