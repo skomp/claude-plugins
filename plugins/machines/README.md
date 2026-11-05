@@ -37,8 +37,9 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   register as it stood **before** the arriving message was folded in, and a guard whose
   field is absent from the message is **false**, never an error.
 - **The verdict** names the state, the `holder`, `accepting`, `terminal`, `may_send`,
-  `remaining`, `effects` (with its `transport_effects` and `agent_effects` split), `order`, `concurrent_with`, every guard reading, every world read,
-  the outbound clock, every refusal, and whether the fold was `truncated`.
+  `remaining`, `effects` (with its `transport_effects` and `agent_effects` split), `order`,
+  `concurrent_with`, every guard reading, every world read, the outbound clock, every
+  refusal, and whether the fold was `truncated`.
 - **`legal` answers two questions.** From `verdict()` it means *this trace is a legal run*,
   and it is false when the fold refused any message; `reason` names the first refusal. It
   is also false when the trace already exceeded a declared cap (a negative `headroom`); the
@@ -61,17 +62,19 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   summed.
 - **The gate** refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
   `terminal state`, `ambiguous`, and the truncation refusal.
-- **`effects` is every effect, in one tuple; `transport_effects` and `agent_effects` split it.**
-  Pass `transport=` to `verdict()` or `gate()` and each effect lands in the list for the
-  performer its verb declares, in declared order (the two lists partition `effects`); without a
-  transport both are empty, and an effect naming a verb the transport does not declare raises
-  `ValueError`. The engine still performs neither list and imports neither `machines.transport`
-  nor `machines.runner`. `effects` is empty when no transition has fired and on every refusal from `gate()`; and
-  `order` and `concurrent_with` describe the last fired transition, not the last message
-  (from `gate()` they are always `ok` and empty).
+- **`effects` is every effect, in one tuple; `transport_effects` and `agent_effects` split
+  it.** Pass `transport=` to `verdict()` or `gate()` and each effect lands in the list for
+  the performer its verb declares, in declared order (the two lists partition `effects`);
+  without a transport both are empty, and an effect naming a verb the transport does not
+  declare raises `ValueError`. The engine still performs neither list and imports neither
+  `machines.transport` nor `machines.runner`. `effects` is empty when no transition has
+  fired and on every refusal from `gate()`; and `order` and `concurrent_with` describe the
+  last fired transition, not the last message (from `gate()` they are always `ok` and
+  empty).
 - **The fold has an engine-side limit** (by default 10,000 messages, refused ones included;
   a caller can pass another `limit`). It is a defence against a runaway trace, not a bound
-  on a protocol, and nothing in a declaration sets it. A fold that reaches it is `truncated` and the verdict is not legal.
+  on a protocol, and nothing in a declaration sets it. A fold that reaches it is `truncated`
+  and the verdict is not legal.
 
 `SCHEMA.md`'s "What the engine does with a declaration" carries the arithmetic and the
 refusal reasons in full.
@@ -112,9 +115,10 @@ only in `SCHEMA.md`, which has it in full.
 ## The declaration
 
 A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — twelve
-fields: `machine`, `publisher`, `version`, `prefix`, `roles`, `kinds`, `fields`, `registers`,
-`cap`, `initial`, `states`, `transitions`. All of them are required except `publisher`,
-`cap`, `fields`, and `registers`. Each role binds to `repository` or `session`, nothing else. Any other top-level field is rejected by name, not silently ignored.
+fields: `machine`, `publisher`, `version`, `prefix`, `roles`, `kinds`, `fields`,
+`registers`, `cap`, `initial`, `states`, `transitions`. All of them are required except
+`publisher`, `cap`, `fields`, and `registers`. Each role binds to `repository` or `session`,
+nothing else. Any other top-level field is rejected by name, not silently ignored.
 `SCHEMA.md` documents every field and why it exists, including the two hazards worth
 knowing before you write a declaration by hand.
 
@@ -155,9 +159,9 @@ engine never calls a verb, and `engine.py`, `fold.py` and `envelope.py` do not i
 `transport/bin/transport <verb>` with no shell, writes `{"channel": ..., "args": ...}` on
 stdin, and returns the result envelope exactly: `{"ok": true, "result": ...}` or
 `{"ok": false, "error": "..."}`. Before it spawns anything, it refuses (`ValueError`) an
-undeclared verb, a verb with `performer: agent`, and arguments that do not match the
-declaration by name, number and type. A transport that cannot run raises
-`TransportCannotRun`: a missing or non-executable entry point, a non-zero exit (stdout is then
+undeclared verb, a verb with `performer: agent`, a `channel` that is not a string, and
+arguments that do not match the declaration by name, number and type. A transport that
+cannot run raises `TransportCannotRun`: a missing or non-executable entry point, a non-zero exit (stdout is then
 discarded), or stdout that is not exactly one of the two envelopes. Two bounds apply to every
 call, `CALL_TIMEOUT_SECONDS` (120) and `MAX_OUTPUT_BYTES` (8 MiB). Hitting either one kills
 the entry point's whole process group and returns `ok: false` naming the bound. The group
@@ -172,11 +176,12 @@ as an empty channel.
 ## The checker
 
 `bin/machines-check [--transport <path>] <path>...` — each path is a declaration file
-directly, or a directory to search for a `SKILL.md`. `--transport` takes a `transport.yaml`
-or a directory holding one; with it, every machine's effects are checked against the verbs
-that transport declares, and each distinct world-touching verb a machine names is printed once as
-`<machine>@<version>: effect <verb> touches <touches>` (a disclosure, never a problem, never
-an exit code). **Without it the effect vocabulary is not checked, and the output says so:**
+directly, or a directory to search for a `SKILL.md`. `--transport <path>` (or
+`--transport=<path>`) takes a `transport.yaml` or a directory holding one; with it, every
+machine's effects are checked against the verbs that transport declares, and each distinct
+world-touching verb a machine names is printed once as `<machine>@<version>: effect <verb>
+touches <touches> (performer <performer>)` (a disclosure, never a problem, never an exit
+code). **Without it the effect vocabulary is not checked, and the output says so:**
 `Effect vocabulary not checked: no --transport given`, on the line after `Examined N
 machines`. A `--transport` that cannot be read exits 2; one that does not parse exits 1 with
 the error, prefixed with the path. It parses every machine it finds, checks each one for

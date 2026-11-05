@@ -404,8 +404,6 @@ class WorldReadsNeverBranch(unittest.TestCase):
         self.assertEqual(len(v.world_reads), 4)
 
 
-
-
 def _loop_machine():
     return _machine([Transition("a", "step", "r", "a")], states=("a",))
 

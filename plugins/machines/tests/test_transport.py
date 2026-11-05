@@ -171,6 +171,11 @@ class TestTopLevel(unittest.TestCase):
                 "transport", "Bad_Name")
         refused(self, doc().replace("transport: t", "transport: 5"), "transport")
 
+    def test_version_must_not_be_empty(self):
+        e = refused(self, doc().replace("version: v1", 'version: ""'),
+                    "version", "empty")
+        self.assertEqual(e.field, "version")
+
     def test_version_must_be_a_string(self):
         e = refused(self, doc().replace("version: v1", "version: 1"), "version")
         self.assertEqual(e.field, "version")
@@ -230,7 +235,8 @@ class TestVerbShape(unittest.TestCase):
         for key in ("touches", "performer", "args"):
             body = "".join(l + "\n" for l in APPEND.splitlines()
                            if not l.strip().startswith(key + ":"))
-            e = refused(self, doc(verbs=LIST + body), key, "channel.append")
+            e = refused(self, doc(verbs=LIST + body), key, "channel.append",
+                        "is missing required field")
             self.assertEqual(e.field, key)
 
     def test_verb_unknown_key_named(self):
@@ -330,6 +336,12 @@ class TestRequiredVerbs(unittest.TestCase):
         refused(self, doc(verbs=LIST.replace("channel-read", "world-read")
                           .replace("    returns: messages\n", "") + APPEND),
                 "channel.list", "channel-read")
+
+    def test_channel_list_must_take_no_arguments(self):
+        e = refused(self, doc(verbs=LIST.replace("args: {}",
+                                                 "args: { since: string }")
+                              + APPEND), "channel.list", "since")
+        self.assertEqual(e.field, "args")
 
     def test_channel_list_must_be_performed_by_the_transport(self):
         refused(self, doc(verbs=LIST.replace("performer: transport",

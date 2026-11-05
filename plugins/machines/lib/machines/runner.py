@@ -33,8 +33,10 @@ CALL_TIMEOUT_SECONDS = 120
 # over every message of tests/fixtures/trace-*.json: the largest is 152 bytes
 # (paxos-acceptor) and 142 bytes (session-relay). A channel at the fold limit
 # is 10000 x 152 bytes, about 1.5 MB; a factor of about 5 leaves room for
-# longer header fields. A channel larger than this would be truncated by the
-# fold anyway.
+# longer header fields. It is a bound in its own right, not a restatement of
+# the fold limit: above about 838 bytes per message, 8 MiB is reached before
+# 10000 messages are. A call that hits it is {"ok": False, ...}, never a
+# truncated channel.
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 
 _ENTRY = os.path.join("bin", "transport")
@@ -60,11 +62,13 @@ class ChannelReadFailed(Exception):
         self.error = error
 
 
-def _check_call(transport, verb, args):
+def _check_call(transport, verb, channel, args):
     if transport.root is None:
         raise ValueError("transport %r has no root: load it with "
                          "load_transport so its entry point can be found"
                          % transport.name)
+    if not isinstance(channel, str):
+        raise ValueError("channel must be a string, not %r" % (channel,))
     if verb not in transport.verbs:
         raise ValueError("transport %r declares no verb %r"
                          % (transport.name, verb))
@@ -184,7 +188,7 @@ def call(transport, verb, channel, args, timeout=CALL_TIMEOUT_SECONDS,
     killed. Raises ValueError before spawning anything if the call does not
     match the declaration, and TransportCannotRun if the transport could not
     run."""
-    _check_call(transport, verb, args)
+    _check_call(transport, verb, channel, args)
     entry = os.path.join(transport.root, _ENTRY)
     payload = json.dumps({"channel": channel, "args": args}).encode("utf-8")
     deadline = time.monotonic() + timeout

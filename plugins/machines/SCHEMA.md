@@ -765,9 +765,10 @@ Each entry is a transition, with these fields:
   says so on every run that has no `--transport`: `Effect vocabulary not checked: no
   --transport given`. A clean report without that line means the effects were checked; with it,
   they were not. With `--transport`, every distinct world-touching verb a machine names (a
-  verb that touches `world-read` or `world-write`) is also printed once, as `<machine>@<version>: effect <verb> touches <touches>`, so
-  an installer can show what the machine can do to the world. These lines are disclosures, not
-  problems, and never change the exit code.
+  verb that touches `world-read` or `world-write`) is also printed once, as
+  `<machine>@<version>: effect <verb> touches <touches> (performer <performer>)`, so an
+  installer can show what the machine can do to the world and who performs it. These lines
+  are disclosures, not problems, and never change the exit code.
 
   **This removed something.** Until cycle C the checker accepted exactly `label.add`,
   `label.remove` and `escalate`, and rejected every other verb. Now a verb is accepted if the
@@ -902,15 +903,23 @@ verbs:
 - **`returns`:** required on a `channel-read` verb and refused on any other. Its one value is
   `messages`.
 - **Required verbs:** exactly one `channel-read` verb, named `channel.list`, with
-  `returns: messages` and `performer: transport`; and a `channel.append` with
+  `returns: messages`, `performer: transport` and `args: {}`; and a `channel.append` with
   `touches: channel-write` and `performer: transport`. A transport with no way to read its
-  channel is not a transport, and the runner needs one name to call.
+  channel is not a transport, and the runner needs one name to call. `channel.list` takes no
+  arguments because `read_channel` calls it with none; any other `args` is refused, with the
+  error field `args`.
+- **`version`:** a non-empty string.
 - **An `agent` verb may not touch the channel.** `performer: agent` with `channel-read` or
   `channel-write` is refused: the channel is the transport's to read and write. This rule is
   not in the design spec; it is the maintainers' call.
 
 `machines-check --transport` checks a machine's effects against a transport's verbs (see
-`effects`, above). Nothing yet runs a transport.
+`effects`, above). `machines.runner` runs a transport; README, "The runner", has its rules.
+
+The entry point is `transport/bin/transport <verb>`. The call is `{"channel": ..., "args":
+...}` as JSON on stdin. The answer is `{"ok": true, "result": ...}` or `{"ok": false,
+"error": "..."}` as JSON on stdout. A non-zero exit means the transport could not run, and
+stdout is then not read as an answer.
 
 ## What the engine does with a declaration
 
@@ -1029,8 +1038,9 @@ failure made silent.
 `gate()` refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
 `terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An
 outbound field of the wrong Python type is refused as `not permitted here`; so is a field
-of the wrong type that no guard reads, because the type check covers every declared field. The gate **stamps the outbound clock and discards any clock the caller
-supplied**: a sender cannot choose it. A truncated fold is never legal, and the reason names
+of the wrong type that no guard reads, because the type check covers every declared
+field. The gate **stamps the outbound clock and discards any clock the caller supplied**: a
+sender cannot choose it. A truncated fold is never legal, and the reason names
 the truncation.
 
 ### The fold limit

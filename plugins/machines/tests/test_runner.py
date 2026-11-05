@@ -111,6 +111,17 @@ class Refused(unittest.TestCase):
         self.assertRefused(self.missing, "label.add", {"name": True},
                            "name", "bool")
 
+    def test_a_channel_that_is_not_a_string_is_refused(self):
+        for channel in (None, 7, b"x"):
+            with self.subTest(channel=channel):
+                with mock.patch.object(
+                        runner.subprocess, "Popen",
+                        side_effect=AssertionError("spawned")):
+                    with self.assertRaises(ValueError) as cm:
+                        call(self.missing, "label.add", channel,
+                             {"name": "x"})
+                self.assertIn("channel", str(cm.exception))
+
     def test_args_that_are_not_a_mapping_are_refused(self):
         self.assertRefused(self.missing, "label.add", [("name", "x")], "args")
 

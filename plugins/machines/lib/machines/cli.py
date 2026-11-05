@@ -18,7 +18,8 @@ Three exit codes, not two:
   anything," and must never be confused with `1` -- a broken install must
   not read as a passing or failing check.
 
-`--transport <path>` takes a `transport.yaml` or a directory containing one.
+`--transport <path>` (or `--transport=<path>`) takes a `transport.yaml` or a
+directory containing one.
 With it, every machine's effects are validated against the transport's
 declared verbs, and each effect that touches the world is printed as a
 disclosure (never a problem, never an exit code). A transport that does not
@@ -83,6 +84,11 @@ def _split_args(argv):
                 return None, [], "--transport needs a path"
             transport_path = argv[i + 1]
             i += 2
+        elif argv[i].startswith("--transport="):
+            transport_path = argv[i][len("--transport="):]
+            if not transport_path:
+                return None, [], "--transport needs a path"
+            i += 1
         else:
             paths.append(argv[i])
             i += 1
@@ -128,6 +134,14 @@ def main(argv):
         except OSError as exc:
             sys.stderr.write("machines-check: cannot read transport %s: %s\n"
                              % (transport_path, exc))
+            nested = os.path.join(transport_path, "transport")
+            if (os.path.isdir(nested) and not os.path.isfile(
+                    os.path.join(transport_path, "transport.yaml"))
+                    and os.path.isfile(os.path.join(nested,
+                                                    "transport.yaml"))):
+                sys.stderr.write("machines-check: %s holds a transport/ "
+                                 "directory; did you mean --transport %s?\n"
+                                 % (transport_path, nested))
             return 2
 
     files = []
@@ -169,7 +183,8 @@ def main(argv):
 
     for name in sorted(report.world_effects):
         for verb, touches in report.world_effects[name]:
-            print("%s: effect %s touches %s" % (name, verb, touches))
+            print("%s: effect %s touches %s (performer %s)" % (
+                name, verb, touches, transport.verbs[verb].performer))
 
     if report.collisions:
         for a, b in report.collisions:

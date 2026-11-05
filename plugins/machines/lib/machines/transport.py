@@ -120,6 +120,8 @@ def parse_transport(text):
                    "transport")
     version = _string(_require(data, "version", "the declaration"),
                       "version", "")
+    if not version:
+        raise _err("version must not be empty", "version")
 
     total_order, channel_id = _channel(_require(data, "channel",
                                                 "the declaration"))
@@ -216,12 +218,9 @@ def _args(verb, raw):
 
 def _required_verbs(verbs):
     """Spec section 13.3: exactly one channel-read verb, named channel.list,
-    returning messages and performed by the transport; and a channel.append
-    that writes the channel, performed by the transport. `returns: messages`
-    is enforced for any channel-read verb, and `performer: transport` for any
-    channel-read or channel-write verb, by `_verb`: an agent may touch
-    neither, so a second check here would be dead code (a mutation removing
-    it survived all 50 tests, which is how that was found)."""
+    and a channel.append that writes the channel. `_verb` already guarantees
+    `returns: messages` on any channel-read verb and `performer: transport`
+    on any channel verb, so they are not re-checked here."""
     reads = [v.name for v in verbs.values() if v.touches == "channel-read"]
     if len(reads) > 1:
         raise _err("a transport declares exactly one channel-read verb, "
@@ -230,6 +229,10 @@ def _required_verbs(verbs):
         raise _err("the transport's one channel-read verb must be named "
                    "%r%s" % (_LIST, "; found %r" % reads[0] if reads
                              else "; it declares none"), "verbs")
+    if verbs[_LIST].args != {}:
+        raise _err("verb %r must declare args: {}, not %r; the runner calls "
+                   "it with no arguments" % (_LIST, verbs[_LIST].args),
+                   "args")
     if _APPEND not in verbs:
         raise _err("a transport must declare a %r verb" % _APPEND, "verbs")
     append = verbs[_APPEND]

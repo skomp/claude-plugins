@@ -464,10 +464,37 @@ class TestCli(unittest.TestCase):
         code, out, _ = self._run([str(FIXTURES / "valid-session-relay.md"),
                                   "--transport", str(TRANSPORT)])
         self.assertEqual(code, 0, out)
-        self.assertIn("session-relay@v1: effect escalate touches world-write",
-                      out.splitlines())
-        self.assertIn("session-relay@v1: effect label.add touches world-write",
-                      out.splitlines())
+        self.assertIn("session-relay@v1: effect escalate touches world-write"
+                      " (performer agent)", out.splitlines())
+        self.assertIn("session-relay@v1: effect label.add touches world-write"
+                      " (performer transport)", out.splitlines())
+
+    def test_transport_may_be_given_as_transport_equals_path(self):
+        code, out, _ = self._run(["--transport=" + str(TRANSPORT),
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("not checked", out)
+        self.assertIn("effect escalate touches world-write", out)
+
+    def test_transport_equals_with_no_value_exits_2(self):
+        code, _, err = self._run(["--transport=",
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 2)
+        self.assertIn("--transport", err)
+
+    def test_a_directory_holding_transport_slash_transport_gets_a_hint(self):
+        parent = TRANSPORT.parent
+        code, _, err = self._run(["--transport", str(parent),
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 2)
+        self.assertIn(str(TRANSPORT), err)
+        self.assertIn("did you mean", err)
+
+    def test_a_missing_transport_gets_no_hint(self):
+        code, _, err = self._run(["--transport", "/nonexistent/transport",
+                                  str(FIXTURES / "valid-session-relay.md")])
+        self.assertEqual(code, 2)
+        self.assertNotIn("did you mean", err)
 
     def test_the_transport_may_be_named_by_its_yaml_file(self):
         code, out, _ = self._run(
