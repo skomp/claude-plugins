@@ -150,7 +150,8 @@ declaration by name, number and type. A transport that cannot run raises
 `TransportCannotRun`: a missing or non-executable entry point, a non-zero exit (stdout is then
 discarded), or stdout that is not exactly one of the two envelopes. Two bounds apply to every
 call, `CALL_TIMEOUT_SECONDS` (120) and `MAX_OUTPUT_BYTES` (8 MiB). Hitting either one kills
-the entry point's whole process group and returns `ok: false` naming the bound. The
+the entry point's whole process group and returns `ok: false` naming the bound. The group
+is also killed before anything else escapes `call`, a `KeyboardInterrupt` included. The
 measurements behind both bounds are beside the constants in `runner.py`.
 
 `read_channel(transport, machine, channel)` calls `channel.list` and returns the answer as a
