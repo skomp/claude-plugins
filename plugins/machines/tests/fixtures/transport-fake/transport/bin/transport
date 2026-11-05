@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""The fake transport's entry point, for tests of machines.runner.
+
+Called as `transport <verb>` with `{"channel": ..., "args": ...}` on stdin.
+It behaves according to `channel`, so a test chooses the behaviour without
+declaring an extra argument:
+
+  session-relay, paxos-acceptor  channel.list answers the messages of
+      tests/fixtures/trace-<name>.json; other verbs answer {}. The fixture's
+      own `channel` string selects it too, so a test can compare a whole
+      trace, `channel` included.
+  sleep          sleeps 30 s
+  flood          writes FLOOD_BYTES (128 KiB); a test passes max_output 64 KiB
+  closes-stdout  closes its stdout, then sleeps 30 s
+  child-sleeps   spawns `sleep 30` as a child (same process group), prints
+                 nothing and waits for it
+  exit-3         prints a valid ok envelope, then exits 3
+  not-json, extra-key, both, ok-not-bool, ok-only, not-object,
+  error-not-string
+                 malformed envelopes, one cause each
+  body           channel.list returns one message with a "body" key added
+  refuse         prints {"ok": false, "error": "refused"}
+  echo           answers with its own argv and the call it read on stdin
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+FIXTURES = Path(__file__).resolve().parents[3]
+TRACES = ("session-relay", "paxos-acceptor")
+FLOOD_BYTES = 128 * 1024
+
+MALFORMED = {
+    "not-json": "this is not json",
+    "extra-key": json.dumps({"ok": True, "result": {}, "extra": 1}),
+    "both": json.dumps({"ok": True, "result": {}, "error": "x"}),
+    "ok-not-bool": json.dumps({"ok": "true", "result": {}}),
+    "ok-only": json.dumps({"ok": True}),
+    "not-object": json.dumps([{"ok": True, "result": {}}]),
+    "error-not-string": json.dumps({"ok": False, "error": 3}),
+}
+
+
+def answer(result):
+    print(json.dumps({"ok": True, "result": result}))
+
+
+def trace_for(channel):
+    for name in TRACES:
+        data = json.loads((FIXTURES / ("trace-%s.json" % name)).read_text())
+        if channel in (name, data["channel"]):
+            return data
+    return None
+
+
+def main():
+    verb = sys.argv[1]
+    call = json.loads(sys.stdin.read())
+    channel = call["channel"]
+
+    trace = trace_for(channel)
+    if trace is not None:
+        answer({"messages": trace["messages"]} if verb == "channel.list"
+               else {})
+    elif channel == "sleep":
+        time.sleep(30)
+    elif channel == "closes-stdout":
+        sys.stdout.close()
+        os.close(1)
+        time.sleep(30)
+    elif channel == "flood":
+        sys.stdout.write("x" * FLOOD_BYTES)
+        sys.stdout.flush()
+    elif channel == "child-sleeps":
+        subprocess.Popen(["sleep", "30"]).wait()
+    elif channel == "exit-3":
+        answer({})
+        sys.stdout.flush()
+        sys.exit(3)
+    elif channel in MALFORMED:
+        print(MALFORMED[channel])
+    elif channel == "body":
+        message = dict(trace_for("session-relay")["messages"][0])
+        message["body"] = "the text of a comment"
+        answer({"messages": [message]})
+    elif channel == "refuse":
+        print(json.dumps({"ok": False, "error": "refused"}))
+    elif channel == "echo":
+        answer({"argv": sys.argv, "call": call})
+    else:
+        sys.exit("unknown test channel %r" % channel)
+
+
+if __name__ == "__main__":
+    main()

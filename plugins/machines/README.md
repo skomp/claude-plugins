@@ -136,6 +136,28 @@ nothing in it is executed. `machines-check --transport` checks a machine's effec
 it (see "The checker"). `SCHEMA.md`'s
 "The transport declaration" has the rules.
 
+## The runner
+
+`machines.runner` is the only code in this framework that executes a publisher's file. The
+engine never calls a verb, and `engine.py`, `fold.py` and `envelope.py` do not import it.
+
+`call(transport, verb, channel, args)` performs one verb. It spawns
+`transport/bin/transport <verb>` with no shell, writes `{"channel": ..., "args": ...}` on
+stdin, and returns the result envelope exactly: `{"ok": true, "result": ...}` or
+`{"ok": false, "error": "..."}`. Before it spawns anything, it refuses (`ValueError`) an
+undeclared verb, a verb with `performer: agent`, and arguments that do not match the
+declaration by name, number and type. A transport that cannot run raises
+`TransportCannotRun`: a missing or non-executable entry point, a non-zero exit (stdout is then
+discarded), or stdout that is not exactly one of the two envelopes. Two bounds apply to every
+call, `CALL_TIMEOUT_SECONDS` (120) and `MAX_OUTPUT_BYTES` (8 MiB). Hitting either one kills
+the entry point's whole process group and returns `ok: false` naming the bound. The
+measurements behind both bounds are beside the constants in `runner.py`.
+
+`read_channel(transport, machine, channel)` calls `channel.list` and returns the answer as a
+`Trace`, through the same `parse_trace` a recorded trace goes through. A message body is
+therefore refused by name. An `ok: false` answer raises `ChannelReadFailed`. It is never read
+as an empty channel.
+
 ## The checker
 
 `bin/machines-check [--transport <path>] <path>...` — each path is a declaration file
