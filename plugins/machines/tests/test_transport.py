@@ -266,6 +266,20 @@ class TestVerbShape(unittest.TestCase):
         refused(self, doc(verbs=LIST + APPEND.replace(
             "body: string", "body: 3")), "channel.append")
 
+    def test_the_fixture_transport_uses_only_words_the_checker_can_test(self):
+        # Reads the YAML directly, not through parse_transport, so that a
+        # word dropped from ARG_TYPES fails this test and not only the
+        # parser. Replaces test_every_builtin_type_word_is_one_the_checker_can_test.
+        import yaml
+        from machines.machine import arg_type
+        raw = yaml.safe_load(FIXTURE.read_text())
+        samples = {"string": "x", "int": 1, "bool": True}
+        used = {w for v in raw["verbs"].values() for w in v["args"].values()}
+        self.assertTrue(used)
+        for word in used:
+            self.assertIn(word, ARG_TYPES)
+            self.assertEqual(arg_type(samples[word]), word)
+
     def test_every_arg_type_word_is_accepted(self):
         for word in ARG_TYPES:
             t = parse_transport(doc(verbs=LIST + APPEND.replace(

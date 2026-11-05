@@ -262,13 +262,6 @@ class TestCheckMachine(unittest.TestCase):
             m = parse((Path(__file__).parent / "fixtures" / name).read_text())
             self.assertEqual(check_machine(m, FIXTURE_VERBS), [], name)
 
-    def test_arg_types_are_the_type_words_the_fixture_transport_uses(self):
-        used = set()
-        for verb in FIXTURE_VERBS.values():
-            used.update(verb.args.values())
-        self.assertEqual(used, {"string"})  # the fixture uses only string
-        self.assertTrue(used <= set(machine_module.ARG_TYPES))
-
     def test_every_arg_type_word_has_a_test_and_names_a_value(self):
         samples = {"string": "x", "int": 1, "bool": True}
         self.assertEqual(sorted(machine_module.ARG_TYPES), sorted(samples))
