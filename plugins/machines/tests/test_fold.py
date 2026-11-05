@@ -61,10 +61,12 @@ class FixtureFolds(unittest.TestCase):
               "awaiting-answer", "answer", "initiator", "awaiting-triage"),
              (3, "awaiting-triage", "concluded",
               "awaiting-triage", "conclusion", "responder", "concluded")])
-        self.assertEqual(f.fired[0].transition.effects,
+        # `list(...)`: what is pinned is the effects, not the container type.
+        self.assertEqual(list(f.fired[0].transition.effects),
                          [Effect("label.add", {"name": "session-relay:open"})])
-        self.assertEqual(f.fired[3].transition.effects,
-                         [Effect("label.remove", {"name": "session-relay:open"})])
+        self.assertEqual(list(f.fired[3].transition.effects),
+                         [Effect("label.remove",
+                                 {"name": "session-relay:open"})])
 
     def test_the_paxos_fixture_folds_to_decided_and_remembers_the_ballot(self):
         m = _paxos()
@@ -290,12 +292,21 @@ def _messy_trace_with_world_reads(raw_reads):
         ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # ok -> prepared
         ("prepare", "proposer", "p1", 1, {"ballot": 5}),    # duplicate
         ("promise", "acceptor", "a1", 9, {}),               # out-of-order
-        ("promise", "acceptor", "a1", 2, {"ballot": "x"}),  # field type
+        ("promise", "acceptor", "a1", 2, {"ballot": True}),  # field type
         ("prepare", "proposer", "p1", 2, {"ballot": 6}),    # no transition
         ("promise", "acceptor", "a1", 1, {}),               # concurrent
         ("accept-request", "proposer", "p1", 2, {"ballot": 5}),  # ok
     ]
     return _trace([_msg(k, b, snd, c, f, reads) for k, b, snd, c, f in rows])
+
+
+# The attributes the invariance tests compare, once each.
+_FOLD_FIELDS = ("state", "registers", "spent", "clocks", "fired", "refusals",
+                "guards", "truncated", "steps", "outbound_clock")
+_VERDICT_FIELDS = ("legal", "reason", "state", "holder", "accepting",
+                   "terminal", "may_send", "remaining", "order",
+                   "concurrent_with", "outbound_clock", "truncated",
+                   "refusals", "effects", "guards")
 
 
 def _norm(value):
@@ -321,10 +332,7 @@ class WorldReadsNeverBranch(unittest.TestCase):
         from machines.engine import verdict
         a = verdict(_paxos(), _trace_with_world_reads(WORLD))
         b = verdict(_paxos(), _trace_with_world_reads(OTHER))
-        for name in ("legal", "reason", "state", "holder", "accepting",
-                     "terminal", "may_send", "remaining", "order",
-                     "concurrent_with", "outbound_clock", "truncated",
-                     "refusals", "effects", "guards"):
+        for name in _VERDICT_FIELDS:
             self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
                              name)
         self.assertTrue(a.guards)   # the comparison is not vacuous
@@ -333,9 +341,7 @@ class WorldReadsNeverBranch(unittest.TestCase):
     def test_the_fold_is_identical_however_a_world_read_turned_out(self):
         a = fold(_paxos(), _trace_with_world_reads(WORLD))
         b = fold(_paxos(), _trace_with_world_reads(OTHER))
-        for name in ("state", "registers", "spent", "clocks", "fired",
-                     "refusals", "guards", "truncated", "steps",
-                     "outbound_clock"):
+        for name in _FOLD_FIELDS:
             self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
                              name)
         self.assertEqual(a.registers, {"highest_promised": 5})
@@ -352,21 +358,43 @@ class WorldReadsNeverBranch(unittest.TestCase):
         self.assertTrue(any(s.concurrent_with for s in a.fired))
         self.assertTrue(a.guards)
         b = fold(_paxos(), _messy_trace_with_world_reads(OTHER))
-        for name in ("state", "registers", "spent", "clocks", "fired",
-                     "refusals", "guards", "truncated", "steps",
-                     "outbound_clock"):
+        for name in _FOLD_FIELDS:
             self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
                              name)
         va = verdict(_paxos(), _messy_trace_with_world_reads(WORLD))
         vb = verdict(_paxos(), _messy_trace_with_world_reads(OTHER))
-        for name in ("legal", "reason", "state", "holder", "accepting",
-                     "terminal", "may_send", "remaining", "order",
-                     "concurrent_with", "outbound_clock", "truncated",
-                     "refusals", "effects", "guards"):
+        for name in _VERDICT_FIELDS:
             self.assertEqual(_norm(getattr(va, name)),
                              _norm(getattr(vb, name)), name)
         self.assertEqual(len(va.refusals), 4)
         self.assertEqual(va.order, "ok")
+
+    def test_the_invariance_covers_the_ambiguous_refusal(self):
+        from machines.engine import verdict
+        from machines.envelope import WorldRead
+        m = _machine(
+            [Transition("a", "step", "r", "b", guard=Guard("n", "ge", "reg")),
+             Transition("a", "step", "r", "a", guard=Guard("n", "le", "reg"))],
+            registers={"reg": Register("reg", "max", "n", ["step"], 5)},
+            fields={"n": Field("n", "int")})
+
+        def run(raw_reads):
+            reads = [WorldRead(r["verb"], r["result"]) for r in raw_reads]
+            return _trace([_msg("step", "r", "s", 1, {"n": 5}, reads)])
+
+        a, b = fold(m, run(WORLD)), fold(m, run(OTHER))
+        self.assertEqual([r.reason for r in a.refusals], ["ambiguous"])
+        self.assertEqual([g.fired for g in a.guards], [True, True])
+        for name in _FOLD_FIELDS:
+            self.assertEqual(_norm(getattr(a, name)), _norm(getattr(b, name)),
+                             name)
+        va, vb = verdict(m, run(WORLD)), verdict(m, run(OTHER))
+        self.assertEqual(va.reason, "message 0 refused: ambiguous (2 "
+                         "transitions fire: ('a', 'step', 'r', 'b'); "
+                         "('a', 'step', 'r', 'a'))")
+        for name in _VERDICT_FIELDS:
+            self.assertEqual(_norm(getattr(va, name)),
+                             _norm(getattr(vb, name)), name)
 
     def test_a_world_read_is_carried_into_the_verdict_naming_the_message(self):
         from machines.engine import verdict
@@ -376,8 +404,6 @@ class WorldReadsNeverBranch(unittest.TestCase):
         self.assertEqual(len(v.world_reads), 4)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 def _loop_machine():
@@ -478,3 +504,7 @@ class CandidatesRule(unittest.TestCase):
         c = self._ask(self._two(), "a", "step", "r", {}, {"reg": 5})
         self.assertEqual(c.firing, ())
         self.assertFalse(c.ambiguous)
+
+
+if __name__ == "__main__":
+    unittest.main()

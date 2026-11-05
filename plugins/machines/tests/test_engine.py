@@ -1,5 +1,5 @@
+import ast
 import inspect
-import re
 import unittest
 from pathlib import Path
 
@@ -23,14 +23,15 @@ def _trace(messages):
     return Trace("c", "m", "v1", True, messages)
 
 
-def _machine(cap, cap_scope="channel", transitions=None, states=None):
+def _machine(cap, cap_scope="channel", transitions=None, states=None,
+             kinds=("step",)):
     states = states or {"a": State("a", holder="r", accepting=True),
                         "b": State("b", terminal=True, accepting=True)}
     transitions = transitions if transitions is not None else [
         Transition("a", "step", "r", "b", signal=True,
                    effects=[Effect("escalate")])]
     return Machine("m", "v1", "m:v1 ", {"r": "session", "s": "session"},
-                   ["step"], cap, "a", states, transitions,
+                   list(kinds), cap, "a", states, transitions,
                    cap_scope=cap_scope)
 
 
@@ -165,14 +166,34 @@ class Effects(unittest.TestCase):
         self.assertEqual(v.may_send, ())
         self.assertIsInstance(v, Verdict)
 
+    def test_effects_are_empty_when_nothing_fired_and_on_a_gate_refusal(self):
+        # SCHEMA.md says so; this is the test that holds it to that.
+        self.assertEqual(verdict(_machine(None), _trace([])).effects, ())
+        v = gate(_machine(None), _trace([]), _out("nope", "r", "x"))
+        self.assertEqual((v.legal, v.effects), (False, ()))
+        v = gate(_machine(None), _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.legal, v.effects),
+                         (True, (Effect("escalate", {}),)))
+
     def test_the_engine_module_imports_nothing_that_could_act(self):
-        src = inspect.getsource(machines.engine)
-        for pattern in (r"^\s*import (os|sys|time|subprocess|socket|"
-                        r"shutil|pathlib|urllib|datetime|random)\b",
-                        r"^\s*from (os|time|subprocess|socket|pathlib|"
-                        r"datetime) import",
-                        r"\bopen\(", r"\bos\.environ\b"):
-            self.assertIsNone(re.search(pattern, src, re.M), pattern)
+        # Read the syntax tree, not the text: a regular expression over the
+        # source misses `__import__("os")` and `import io`. The engine may
+        # import `machines.fold` and nothing else, at any depth.
+        tree = ast.parse(inspect.getsource(machines.engine))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "." * node.level)
+        self.assertEqual(imported, {"machines.fold"})
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        self.assertEqual(
+            names & {"open", "__import__", "exec", "eval", "compile",
+                     "input", "print"}, set())
+        attrs = {n.attr for n in ast.walk(tree)
+                 if isinstance(n, ast.Attribute)}
+        self.assertEqual(attrs & {"environ", "system", "popen"}, set())
 
 
 class Order(unittest.TestCase):
@@ -265,8 +286,8 @@ class Gate(unittest.TestCase):
         m2 = _machine(1, "role", states={
             "a": State("a", holder="r", accepting=True)}, transitions=[
             Transition("a", "step", "r", "a", signal=True),
-            Transition("a", "note", "r", "a", signal=False)])
-        m2.kinds.append("note")
+            Transition("a", "note", "r", "a", signal=False)],
+            kinds=("step", "note"))
         trace = _trace(_spend("r", "x", 1))
         self.assertEqual(gate(m2, trace, _out("step", "r", "x")).reason,
                          "cap exhausted")
@@ -349,10 +370,6 @@ class Gate(unittest.TestCase):
         v = gate(SESSION_RELAY, _trace([]),
                  _out("triage", "initiator", "repo-a"))
         self.assertEqual(v.effects, (Effect("label.add", {"name": "session-relay:open"}),))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class OverspentTrace(unittest.TestCase):
@@ -460,3 +477,7 @@ class TruncatedFold(unittest.TestCase):
         v = gate(_loop(None, "channel"), _trace(_spend("r", "x", 5)),
                  _out("step", "r", "x"), limit=10)
         self.assertEqual((v.truncated, v.legal), (False, True))
+
+
+if __name__ == "__main__":
+    unittest.main()

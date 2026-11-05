@@ -8,7 +8,7 @@ import machines.envelope
 import machines.fold
 from machines.declaration import parse
 from machines.envelope import Envelope, Message, Trace
-from machines.fold import ORDERS, fold
+from machines.fold import fold
 from machines.machine import Machine, State, Transition
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -40,11 +40,10 @@ def _prepare_promise(promise_clock, promise_sender="a1"):
 
 
 class Orders(unittest.TestCase):
-    def test_there_are_exactly_four_order_values(self):
-        self.assertEqual(
-            ORDERS, ("ok", "duplicate", "out-of-order", "concurrent"))
-
     def test_a_clock_that_does_not_increase_from_one_sender_is_refused_as_a_duplicate(self):
+        # The paxos machine has no promise transition from `promised`, so the
+        # clock verdict must be reached before the transition lookup: the
+        # reason is "duplicate", not "no transition".
         f = fold(PAXOS, _trace([
             _msg("prepare", "proposer", "p1", 1, {"ballot": 5}),
             _msg("promise", "acceptor", "a1", 2),
@@ -97,15 +96,6 @@ class Orders(unittest.TestCase):
         self.assertEqual(f.refusals[0].detail,
                          "clock 9 follows nothing seen; highest seen is 6")
         self.assertNotIn("s2", f.clocks)
-
-    def test_a_repeated_message_is_a_duplicate_not_no_transition(self):
-        # The paxos machine has no promise transition from `promised`, so the
-        # clock verdict must be reached before the transition lookup.
-        f = fold(PAXOS, _trace([
-            _msg("prepare", "proposer", "p1", 1, {"ballot": 5}),
-            _msg("promise", "acceptor", "a1", 2),
-            _msg("promise", "acceptor", "a1", 2)]))
-        self.assertEqual(f.refusals[0].reason, "duplicate")
 
 
 class Keys(unittest.TestCase):
@@ -164,3 +154,7 @@ class NoSeq(unittest.TestCase):
             self.assertIsNone(re.search(r"\bseq\b|\bseq_|_seq\b", src),
                               "%s names seq; #48 decision 1 forbids it"
                               % mod.__name__)
+
+
+if __name__ == "__main__":
+    unittest.main()

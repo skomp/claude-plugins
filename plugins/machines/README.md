@@ -42,10 +42,12 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   state's offers, not a permission.
 - **The clock** orders messages and detects duplicates, per sender. Four order values:
   `ok`, `duplicate`, `out-of-order`, `concurrent`; the `order` field only ever holds `ok`
-  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a clock that does not
-  rise is refused. Across senders an equal or lower clock is reported as `concurrent` and
-  **neither message is refused**. The gate stamps the outbound clock and discards any
-  clock the caller supplied.
+  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a
+  clock that does not rise is refused. Once a message has been accepted, a clock above the
+  highest seen plus one is refused as `out-of-order` too, with the gap named in the detail.
+  Across senders an equal or lower clock is reported as `concurrent` and **neither message
+  is refused**. The gate stamps the outbound clock and discards any clock the caller
+  supplied. `SCHEMA.md` has the rule in full.
 - **The cap is per role; the clock is per sender.** `remaining` is `None` exactly when the
   declaration has no `cap`. Otherwise `spent` and `headroom` map every declared role. Under
   `per: channel` the headroom is the same shared number for every role, so it must never be
@@ -54,10 +56,12 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   `terminal state`, `ambiguous`, and the truncation refusal.
 - **`effects` is one unclassified tuple.** The spec promises a `transport` / `agent` split;
   what classifies a verb is the transport declaration, which is a later cycle, so the split
-  waits.
-- **The fold has an engine-side limit** (10,000 messages, refused ones included). It is a
-  defence against a runaway trace, not a bound on a protocol, and nothing in a declaration
-  sets it. A fold that reaches it is `truncated` and the verdict is not legal.
+  waits. It is empty when no transition has fired and on every refusal from `gate()`; and
+  `order` and `concurrent_with` describe the last fired transition, not the last message
+  (from `gate()` they are always `ok` and empty).
+- **The fold has an engine-side limit** (by default 10,000 messages, refused ones included;
+  a caller can pass another `limit`). It is a defence against a runaway trace, not a bound
+  on a protocol, and nothing in a declaration sets it. A fold that reaches it is `truncated` and the verdict is not legal.
 
 `SCHEMA.md`'s "What the engine does with a declaration" carries the arithmetic and the
 refusal reasons in full.
@@ -79,7 +83,8 @@ only in `SCHEMA.md`, which has it in full.
 4. **Whether a guard will fire.** `may_send` names a guarded offer without evaluating it, as
    no message exists yet. The checker cannot tell you a guard never fires either.
 5. **Whether the transport told the truth.** A hostile transport can misreport which messages
-   exist, and leaving messages out changes the state and can let a role past its cap. Given
+   exist: it can leave one out, or add one nobody sent. Leaving messages out changes the
+   state and can let a role past its cap. Given
    the trace it was handed, the engine cannot be made to accept a transition the declaration
    lacks, exceed its cap or report an undefined state; every guarantee is about the trace, not
    the conversation.

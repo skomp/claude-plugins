@@ -711,11 +711,13 @@ Each entry is a transition, with these fields:
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
   are held to the same rule. More than one can fire on one trigger and nothing declared
   says which, whether or not `effects` are involved (each may, for example, require its own
-  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — the same
-  value in every field, including its guard and its effects — is reported too, as declared twice. The test is derived from
-  the fields a transition, a guard and an effect actually carry, not from a hand-written list
-  of them, so a field added later is part of it without anyone remembering to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
-  message that matches both as `ambiguous`, so a machine that passed with a repeat would have
+  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A
+  transition that repeats an earlier one word for word — the same value in every field,
+  including its guard and its effects — is reported too, as declared twice. The test is
+  derived from the fields a transition, a guard and an effect actually carry, not from a
+  hand-written list of them, so a field added later is part of it without anyone remembering
+  to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses
+  a message that matches both as `ambiguous`, so a machine that passed with a repeat would have
   a step it can never take. Delete the repeat.
 - **`signal`** (boolean, optional, default: `false`) — whether firing this transition emits a
   signal to a peer, as opposed to a purely local move. If present, must be an actual boolean;
@@ -872,7 +874,10 @@ declared register, what each role has spent against the cap, and every guard rea
   fold carries on. The reasons are `undeclared kind`, `undeclared role`, `field type` (a
   field carried with the wrong Python type), `duplicate`, `out-of-order`, `no transition` and
   `ambiguous` (more than one transition fires; none is picked). A world read carried by a
-  refused message is still reported.
+  refused message is still reported. So are the guard readings of a refused message, when it
+  got as far as the transition lookup: an `ambiguous` or `no transition` refusal has read
+  its guards, and every refusal before that point (the kind, the role, the field type, the
+  clock) has read none.
 
 ### The verdict
 
@@ -885,9 +890,9 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
   names the first refusal. It is also false when the trace already spent more than a
   declared cap (a negative `headroom`), and `reason` then names the role and the overspend.
   The engine does not attribute the overspend to a particular message: which message busted
-  a cap counted per role and per channel is left to a later cycle. From `gate()` it means *may this outbound message be sent now*: a
-  refusal in the history does not by itself refuse an outbound message, though the history is
-  still reported in `refusals`.
+  a cap counted per role and per channel is left to a later cycle. From `gate()` it means
+  *may this outbound message be sent now*: a refusal in the history does not by itself
+  refuse an outbound message, though the history is still reported in `refusals`.
 - **`may_send` still lists the folded state's offers when `legal` is false.** They are what
   the state offers, not a permission; read `legal` first. Each offer names a guard without
   evaluating it, because no message exists yet.
@@ -895,7 +900,12 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
   arguments, not a rendered string. It carries the effects of the transition the gate
   would fire, or of the last transition the fold fired. The framework's design promises a
   `transport` / `agent` split. What classifies a verb is the transport declaration, which is
-  cycle C, so the split waits and `effects` stays one tuple until it exists.
+  cycle C, so the split waits and `effects` stays one tuple until it exists. It is empty
+  when no transition has fired yet (`verdict()`) and on every refusal from `gate()`.
+- **`order` and `concurrent_with` describe the last fired transition, not the last message.**
+  A refused message leaves them alone, and with no transition fired they are `ok` and
+  empty. From `gate()` they are always `ok` and empty: an outbound clock is stamped above
+  every clock seen, so the message has no peers.
 
 ### `remaining`
 
@@ -946,19 +956,22 @@ failure made silent.
 ### The outbound gate
 
 `gate()` refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
-`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An outbound field of the wrong Python type is refused as
-`not permitted here`. The gate **stamps the outbound clock and discards any clock the caller
+`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An
+outbound field of the wrong Python type is refused as `not permitted here`; so is a field
+of the wrong type that no guard reads, because the type check covers every declared field. The gate **stamps the outbound clock and discards any clock the caller
 supplied**: a sender cannot choose it. A truncated fold is never legal, and the reason names
 the truncation.
 
 ### The fold limit
 
-The engine stops a single fold at 10,000 messages. It is an engine-side defence against a
-trace somebody hands it, **not a bound on a protocol**: there is no schema field for it,
-nothing a publisher fills in, and a protocol is still not required to terminate. A truncated
+By default the engine stops a single fold at 10,000 messages. It is an engine-side defence
+against a trace somebody hands it, **not a bound on a protocol**: there is no schema field
+for it, nothing a publisher fills in, and a protocol is still not required to terminate. A truncated
 fold makes the verdict **illegal**, because a verdict computed from a fold that did not
-finish is not a verdict about the channel. `steps` counts refused messages too, because a
-refused message still cost a fold step.
+finish is not a verdict about the channel. `steps` is an attribute of the `Fold`, not a
+field of the verdict, and it counts refused messages too, because a refused message still
+cost a fold step. The limit is the default of the `limit` parameter of `fold`, `verdict` and
+`gate`, so a caller can pass another; nothing a publisher writes can.
 
 ### What the engine does not check
 
@@ -993,7 +1006,8 @@ something that verifies what a conversation means. It does not.
    guarantee here ends at that trace. A trace is only as honest as whoever produced it.
 6. **Anything outside the channel.** The engine carries a world read into the verdict and
    **never branches on it**. That is pinned by a test rather than a comment: the same trace
-   with wildly different world-read payloads must give an identical verdict. A world read
+   with wildly different world-read payloads must give an identical verdict in every field
+   but `world_reads`, which carries the payloads and so differs by design. A world read
    reaches a conversation only as a message somebody wrote into the channel.
 7. **The clock is not `seq`, and `remaining` is not an ordinal.** See "The clock and the four
    order values", above.

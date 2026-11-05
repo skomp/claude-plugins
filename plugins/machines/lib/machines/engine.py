@@ -38,6 +38,11 @@ class Remaining(object):
 
 
 class Verdict(object):
+    """`effects`, `order` and `concurrent_with` describe the LAST FIRED
+    transition of the fold, not the last message of the trace; from `gate()`
+    `effects` is what the transition that would fire requires (() on a
+    refusal) and `order` and `concurrent_with` are always "ok" and ()."""
+
     def __init__(self, legal, reason, state, holder, accepting, terminal,
                  may_send, remaining, effects, order, concurrent_with,
                  guards, world_reads, outbound_clock, refusals, truncated):
@@ -62,15 +67,16 @@ class Verdict(object):
 
 
 def _remaining(m, spent):
+    # `spent` is `Fold.spent`, which holds every declared role: no `.get`.
     if m.cap is None:
         return None  # no cap declared: no bound, and no default substituted
     if m.cap_scope == "role":
-        headroom = {role: m.cap - spent.get(role, 0) for role in m.roles}
+        headroom = {role: m.cap - spent[role] for role in m.roles}
     else:
         shared = m.cap - sum(spent.values())
         headroom = {role: shared for role in m.roles}
     return Remaining(m.cap, m.cap_scope,
-                     {role: spent.get(role, 0) for role in m.roles}, headroom)
+                     {role: spent[role] for role in m.roles}, headroom)
 
 
 def _may_send(m, state):
@@ -88,20 +94,28 @@ def _refusal_reason(refusals):
     return text
 
 
-def _build(m, f, legal, reason, effects=None, extra_guards=()):
+def _build(m, f, legal, reason, remaining, outbound=False, effects=(),
+           extra_guards=()):
     """Assemble a Verdict from a Fold. Shared by `verdict` and `gate`.
-    `effects` and `extra_guards` are for `gate`: the effects of the transition
-    it would fire (or () on a refusal), and the guards it read outbound. The
-    order of an outbound message is "ok" with no peers: its clock is stamped
-    above every clock seen."""
+    `remaining` is `_remaining(m, f.spent)`, computed once by the caller.
+
+    `outbound` says which mode this is. In verdict mode (the default) the
+    effects, the order and `concurrent_with` come from the LAST FIRED
+    transition of the fold: they describe that transition, not the last
+    message of the trace (a refused message leaves them alone), and with no
+    transition fired they are (), "ok" and (). In gate mode `outbound=True`:
+    `effects` is what the transition that would fire requires (() on a
+    refusal), `extra_guards` the guards read outbound, and the order is "ok"
+    with no peers, because an outbound clock is stamped above every clock
+    seen."""
     st = m.states[f.state]
-    last = f.fired[-1] if f.fired else None
-    if effects is None:
+    if outbound:
+        order, concurrent = "ok", ()
+    else:
+        last = f.fired[-1] if f.fired else None
         effects = tuple(last.transition.effects) if last else ()
         order = last.order if last else "ok"
         concurrent = last.concurrent_with if last else ()
-    else:
-        order, concurrent = "ok", ()
     return Verdict(
         legal=legal,
         reason=reason,
@@ -110,7 +124,7 @@ def _build(m, f, legal, reason, effects=None, extra_guards=()):
         accepting=st.accepting,
         terminal=st.terminal,
         may_send=_may_send(m, f.state),
-        remaining=_remaining(m, f.spent),
+        remaining=remaining,
         effects=effects,
         order=order,
         concurrent_with=concurrent,
@@ -152,14 +166,15 @@ def _overspend_reason(m, f):
 
 def verdict(m, trace, limit=MAX_FOLD_STEPS):
     f = fold(m, trace, limit)
+    remaining = _remaining(m, f.spent)
     if f.truncated:
-        return _build(m, f, False, _truncated_reason(f))
+        return _build(m, f, False, _truncated_reason(f), remaining)
     if f.refusals:
-        return _build(m, f, False, _refusal_reason(f.refusals))
+        return _build(m, f, False, _refusal_reason(f.refusals), remaining)
     over = _overspend_reason(m, f)
     if over is not None:
-        return _build(m, f, False, over)
-    return _build(m, f, True, None)
+        return _build(m, f, False, over, remaining)
+    return _build(m, f, True, None, remaining)
 
 
 def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
@@ -193,24 +208,29 @@ def gate(m, trace, outbound, limit=MAX_FOLD_STEPS):
     is a local move and is never counted).
     """
     f = fold(m, trace, limit)
+    remaining = _remaining(m, f.spent)
+
+    def refuse(reason, readings=()):
+        return _build(m, f, False, reason, remaining, True, (), readings)
+
     if f.truncated:
         # The state is partial: nothing may be judged against it.
-        return _build(m, f, False, _truncated_reason(f), ())
+        return refuse(_truncated_reason(f))
     if m.states[f.state].terminal:
-        return _build(m, f, False, "terminal state", ())
+        return refuse("terminal state")
     if (outbound.kind not in m.kinds or outbound.by not in m.roles
             or wrong_type(m, outbound.fields) is not None):
-        return _build(m, f, False, "not permitted here", ())
+        return refuse("not permitted here")
     index = len(trace.messages)
     found = candidates(m, f.state, outbound, f.registers, index)
     firing, readings = found.firing, found.readings
     if not firing:
-        return _build(m, f, False, "not permitted here", (), readings)
+        return refuse("not permitted here", readings)
     if found.ambiguous:
-        return _build(m, f, False, "ambiguous", (), readings)
+        return refuse("ambiguous", readings)
     t = firing[0]
-    remaining = _remaining(m, f.spent)
     if (t.signal and remaining is not None
             and remaining.headroom[outbound.by] <= 0):
-        return _build(m, f, False, "cap exhausted", (), readings)
-    return _build(m, f, True, None, tuple(t.effects), readings)
+        return refuse("cap exhausted", readings)
+    return _build(m, f, True, None, remaining, True, tuple(t.effects),
+                  readings)
