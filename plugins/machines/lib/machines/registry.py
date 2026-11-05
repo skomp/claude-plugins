@@ -101,7 +101,7 @@ class Report(object):
       were validated against its verbs. False means they were not, and a
       reader must not take an empty `problems` as covering them.
     - `world_effects`: `versioned_label` -> sorted list of `(verb,
-      touches)`, one per effect whose verb touches `world-read` or
+      touches)`, one per distinct pair among the effects whose verb touches `world-read` or
       `world-write` (spec 7.4), so an installer can show them. A
       disclosure, not a problem. `{}` when `vocabulary_checked` is False:
       without a transport there is no `touches` to read.
@@ -168,11 +168,11 @@ def check_all(machines, transport=None):
             # own. On a label alone the second one overwrote the first.
             problems[versioned_label(m)] = own_problems
         if verbs is not None:
-            touched = sorted(
+            touched = sorted(set(
                 (e.verb, verbs[e.verb].touches)
                 for t in m.transitions for e in t.effects
                 if isinstance(e, Effect) and e.verb in verbs
-                and verbs[e.verb].touches in WORLD_TOUCHES)
+                and verbs[e.verb].touches in WORLD_TOUCHES))
             if touched:
                 world_effects[versioned_label(m)] = touched
 

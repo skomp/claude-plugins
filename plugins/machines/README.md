@@ -141,7 +141,7 @@ it (see "The checker"). `SCHEMA.md`'s
 `bin/machines-check [--transport <path>] <path>...` — each path is a declaration file
 directly, or a directory to search for a `SKILL.md`. `--transport` takes a `transport.yaml`
 or a directory holding one; with it, every machine's effects are checked against the verbs
-that transport declares, and each effect whose verb touches the world is printed as
+that transport declares, and each distinct world-touching verb a machine names is printed once as
 `<machine>@<version>: effect <verb> touches <touches>` (a disclosure, never a problem, never
 an exit code). **Without it the effect vocabulary is not checked, and the output says so:**
 `Effect vocabulary not checked: no --transport given`, on the line after `Examined N

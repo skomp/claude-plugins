@@ -59,9 +59,17 @@ class TestVocabularyInCheckAll(unittest.TestCase):
         report = check_all([m], load_transport(str(TRANSPORT)))
         self.assertEqual(report.world_effects, {"session-relay@v1": [
             ("escalate", "world-write"),
-            ("label.add", "world-write"), ("label.add", "world-write"),
-            ("label.remove", "world-write"),
+            ("label.add", "world-write"),
             ("label.remove", "world-write")]})
+
+    def test_a_verb_named_twice_is_one_entry(self):
+        m = parse((FIXTURES / "valid-session-relay.md").read_text())
+        n = sum(1 for t in m.transitions for e in t.effects
+                if e.verb == "label.add")
+        self.assertGreater(n, 1)  # the fixture really repeats it
+        pairs = check_all([m], load_transport(str(TRANSPORT))
+                          ).world_effects["session-relay@v1"]
+        self.assertEqual(pairs.count(("label.add", "world-write")), 1)
 
     def test_a_machine_with_no_world_effect_is_absent_from_world_effects(self):
         m = parse((FIXTURES / "valid-paxos-acceptor.md").read_text())

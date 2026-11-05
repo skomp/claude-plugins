@@ -764,8 +764,8 @@ Each entry is a transition, with these fields:
   validate a verb against, and a machine naming a verb nobody declared passes. `machines-check`
   says so on every run that has no `--transport`: `Effect vocabulary not checked: no
   --transport given`. A clean report without that line means the effects were checked; with it,
-  they were not. With `--transport`, every effect whose verb touches `world-read` or
-  `world-write` is also printed, as `<machine>@<version>: effect <verb> touches <touches>`, so
+  they were not. With `--transport`, every distinct world-touching verb a machine names (a
+  verb that touches `world-read` or `world-write`) is also printed once, as `<machine>@<version>: effect <verb> touches <touches>`, so
   an installer can show what the machine can do to the world. These lines are disclosures, not
   problems, and never change the exit code.
 
