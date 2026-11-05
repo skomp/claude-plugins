@@ -1,5 +1,5 @@
+import ast
 import inspect
-import re
 import unittest
 from pathlib import Path
 
@@ -23,14 +23,15 @@ def _trace(messages):
     return Trace("c", "m", "v1", True, messages)
 
 
-def _machine(cap, cap_scope="channel", transitions=None, states=None):
+def _machine(cap, cap_scope="channel", transitions=None, states=None,
+             kinds=("step",)):
     states = states or {"a": State("a", holder="r", accepting=True),
                         "b": State("b", terminal=True, accepting=True)}
     transitions = transitions if transitions is not None else [
         Transition("a", "step", "r", "b", signal=True,
                    effects=[Effect("escalate")])]
     return Machine("m", "v1", "m:v1 ", {"r": "session", "s": "session"},
-                   ["step"], cap, "a", states, transitions,
+                   list(kinds), cap, "a", states, transitions,
                    cap_scope=cap_scope)
 
 
@@ -165,14 +166,149 @@ class Effects(unittest.TestCase):
         self.assertEqual(v.may_send, ())
         self.assertIsInstance(v, Verdict)
 
+    def test_effects_are_empty_when_nothing_fired_and_on_a_gate_refusal(self):
+        # SCHEMA.md says so; this is the test that holds it to that.
+        self.assertEqual(verdict(_machine(None), _trace([])).effects, ())
+        v = gate(_machine(None), _trace([]), _out("nope", "r", "x"))
+        self.assertEqual((v.legal, v.effects), (False, ()))
+        v = gate(_machine(None), _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.legal, v.effects),
+                         (True, (Effect("escalate", {}),)))
+
     def test_the_engine_module_imports_nothing_that_could_act(self):
+        # Read the syntax tree, not the text: a regular expression over the
+        # source misses `__import__("os")` and `import io`. The engine may
+        # import `machines.fold` and nothing else, at any depth.
+        tree = ast.parse(inspect.getsource(machines.engine))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "." * node.level)
+        self.assertEqual(imported, {"machines.fold"})
+        names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        self.assertEqual(
+            names & {"open", "__import__", "exec", "eval", "compile",
+                     "input", "print"}, set())
+        attrs = {n.attr for n in ast.walk(tree)
+                 if isinstance(n, ast.Attribute)}
+        self.assertEqual(attrs & {"environ", "system", "popen"}, set())
+
+
+class TwoEffectLists(unittest.TestCase):
+    """The verdict's `transport_effects` and `agent_effects` (cycle C, task 4).
+    The engine reads `.verbs` and `.performer` off the object it is handed."""
+
+    @classmethod
+    def setUpClass(cls):
+        from machines.transport import load_transport
+        cls.transport = load_transport(
+            FIXTURES / "transport-fake" / "transport")
+        cls.add = Effect("label.add", {"name": "x"})
+        cls.esc = Effect("escalate")
+        cls.rm = Effect("label.remove", {"name": "x"})
+        cls.machine = _machine(None, transitions=[
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=[cls.add, cls.esc, cls.rm, cls.esc])])
+
+    def _one_step(self):
+        return _trace([_msg("step", "r", "x", 1)])
+
+    def test_the_two_lists_partition_effects_and_keep_its_order(self):
+        v = verdict(self.machine, self._one_step(), transport=self.transport)
+        self.assertEqual(v.effects, (self.add, self.esc, self.rm, self.esc))
+        self.assertEqual(v.transport_effects, (self.add, self.rm))
+        self.assertEqual(v.agent_effects, (self.esc, self.esc))
+
+    def test_gate_classifies_the_effects_it_would_fire(self):
+        v = gate(self.machine, _trace([]), _out("step", "r", "x"),
+                 transport=self.transport)
+        self.assertEqual(v.transport_effects, (self.add, self.rm))
+        self.assertEqual(v.agent_effects, (self.esc, self.esc))
+
+    def test_without_a_transport_both_lists_are_empty(self):
+        v = verdict(self.machine, self._one_step())
+        self.assertEqual(len(v.effects), 4)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        v = gate(self.machine, _trace([]), _out("step", "r", "x"))
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+
+    def test_both_lists_are_empty_when_nothing_fired_or_the_gate_refuses(self):
+        v = verdict(self.machine, _trace([]), transport=self.transport)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        v = gate(self.machine, _trace([]), _out("nope", "r", "x"),
+                 transport=self.transport)
+        self.assertEqual((v.transport_effects, v.agent_effects), ((), ()))
+        # every gate refusal path, with a machine whose transition has effects
+        loop = _loop(1, "channel")
+        for m, tr, out in (
+                (loop, _trace(_spend("r", "x", 1)), _out("step", "r", "x")),
+                (self.machine, self._one_step(), _out("step", "r", "x")),
+                (loop, _trace([]), _out("step", "s", "x"))):
+            v = gate(m, tr, out, transport=self.transport)
+            self.assertFalse(v.legal)
+            self.assertEqual((v.effects, v.transport_effects,
+                              v.agent_effects), ((), (), ()))
+
+    def test_an_undeclared_verb_raises_value_error_naming_it(self):
+        m = _machine(None, transitions=[
+            Transition("a", "step", "r", "b", signal=True,
+                       effects=[Effect("no.such.verb")])])
+        with self.assertRaises(ValueError) as cm:
+            verdict(m, self._one_step(), transport=self.transport)
+        self.assertIn("no.such.verb", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            gate(m, _trace([]), _out("step", "r", "x"),
+                 transport=self.transport)
+        self.assertIn("no.such.verb", str(cm.exception))
+
+    def test_a_performer_that_is_neither_raises_naming_verb_and_performer(
+            self):
+        class V(object):
+            performer = "robot"
+
+        class T(object):
+            verbs = {"escalate": V()}
+
+        m = _machine(None)
+        with self.assertRaises(ValueError) as cm:
+            verdict(m, self._one_step(), transport=T())
+        self.assertIn("escalate", str(cm.exception))
+        self.assertIn("robot", str(cm.exception))
+        with self.assertRaises(ValueError):
+            gate(m, _trace([]), _out("step", "r", "x"), transport=T())
+
+    def _assert_classified(self, v):
+        esc = Effect("escalate")
+        self.assertEqual(v.effects, (esc,))
+        self.assertEqual((v.transport_effects, v.agent_effects),
+                         ((), (esc,)))
+
+    def test_a_truncated_verdict_still_classifies_the_last_fired(self):
+        v = verdict(_loop(None, "channel"), _trace(_spend("r", "x", 50)),
+                    limit=10, transport=self.transport)
+        self.assertTrue(v.truncated)
+        self._assert_classified(v)
+
+    def test_a_refused_verdict_still_classifies_the_last_fired(self):
+        msgs = _spend("r", "x", 1) + [_msg("nope", "r", "x", 2)]
+        v = verdict(_loop(None, "channel"), _trace(msgs),
+                    transport=self.transport)
+        self.assertTrue(v.refusals)
+        self.assertIn("refused", v.reason)
+        self._assert_classified(v)
+
+    def test_an_overspent_verdict_still_classifies_the_last_fired(self):
+        v = verdict(_loop(2, "channel"), _trace(_spend("r", "x", 3)),
+                    transport=self.transport)
+        self.assertIn("cap exceeded", v.reason)
+        self._assert_classified(v)
+
+    def test_the_engine_names_neither_transport_nor_runner(self):
         src = inspect.getsource(machines.engine)
-        for pattern in (r"^\s*import (os|sys|time|subprocess|socket|"
-                        r"shutil|pathlib|urllib|datetime|random)\b",
-                        r"^\s*from (os|time|subprocess|socket|pathlib|"
-                        r"datetime) import",
-                        r"\bopen\(", r"\bos\.environ\b"):
-            self.assertIsNone(re.search(pattern, src, re.M), pattern)
+        self.assertNotIn("machines.transport", src)
+        self.assertNotIn("machines.runner", src)
 
 
 class Order(unittest.TestCase):
@@ -265,8 +401,8 @@ class Gate(unittest.TestCase):
         m2 = _machine(1, "role", states={
             "a": State("a", holder="r", accepting=True)}, transitions=[
             Transition("a", "step", "r", "a", signal=True),
-            Transition("a", "note", "r", "a", signal=False)])
-        m2.kinds.append("note")
+            Transition("a", "note", "r", "a", signal=False)],
+            kinds=("step", "note"))
         trace = _trace(_spend("r", "x", 1))
         self.assertEqual(gate(m2, trace, _out("step", "r", "x")).reason,
                          "cap exhausted")
@@ -349,10 +485,6 @@ class Gate(unittest.TestCase):
         v = gate(SESSION_RELAY, _trace([]),
                  _out("triage", "initiator", "repo-a"))
         self.assertEqual(v.effects, (Effect("label.add", {"name": "session-relay:open"}),))
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class OverspentTrace(unittest.TestCase):
@@ -460,3 +592,7 @@ class TruncatedFold(unittest.TestCase):
         v = gate(_loop(None, "channel"), _trace(_spend("r", "x", 5)),
                  _out("step", "r", "x"), limit=10)
         self.assertEqual((v.truncated, v.legal), (False, True))
+
+
+if __name__ == "__main__":
+    unittest.main()

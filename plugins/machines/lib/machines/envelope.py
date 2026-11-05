@@ -17,7 +17,9 @@ _WORLD_READ_KEYS = ("verb", "result")
 
 
 class TraceError(DeclarationError):
-    pass
+    """A trace the parser refuses. `field` is the NAME OF THE CONTAINER that
+    holds the problem (`"message 3"`, `"trace"`), not the offending key; the
+    key is named in the message."""
 
 
 class WorldRead:

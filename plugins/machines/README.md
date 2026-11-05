@@ -7,16 +7,23 @@ and check it before you trust it.
 
 **Cycle A shipped the schema and the checker; cycle A.1 built typed fields, registers,
 guard and a scoped, strengthened cap check into that same schema and checker; cycle B
-built the engine.** There is an engine: given a machine and the recorded trace of a
-channel, it advances a state and emits a **verdict**. It still emits no message and
-performs no effect, because the verdict only names what would happen. There is no
-installer — nothing wires a declared machine into anything that dispatches real traffic.
-There is no dispatcher — nothing routes an inbound message to the machine that owns it.
+built the engine; cycle C (C.1-C.3) shipped the transport declaration, the open effect
+vocabulary, the runner and the verdict's two effect lists.** There is an engine: given a
+machine and the recorded trace of a channel, it advances a state and emits a **verdict**.
+The engine itself still emits no message and performs no effect, because the verdict only
+names what would happen. A transport declares its verbs in `transport/transport.yaml`;
+`machines-check --transport` checks a machine's effects against that open vocabulary (there
+is no longer a fixed three-verb list); `machines.runner` is the only code that executes a
+transport; and a verdict splits its effects into `transport_effects` and `agent_effects`.
+There is no installer (cycle C.4) — nothing wires a declared machine into anything that
+dispatches real traffic. There is no dispatcher — nothing routes an inbound message to the
+machine that owns it.
 What exists is a closed declaration language, a parser for it, a set of checks that a
 single machine is well-formed, a checker that runs those checks over every machine handed
-to it and reports whether any two claim the same message, and an engine that folds a trace
-into a verdict. The engine is a library (`machines.engine`); `bin/machines-check` does not
-call it. Anything that wires the engine into a transport is a later cycle.
+to it and reports whether any two claim the same message, an engine that folds a trace
+into a verdict, a transport declaration with its parser, and a runner. The engine is a
+library (`machines.engine`); `bin/machines-check` does not call it. The installer and the
+dispatcher are later work.
 
 ## The engine
 
@@ -30,8 +37,9 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   register as it stood **before** the arriving message was folded in, and a guard whose
   field is absent from the message is **false**, never an error.
 - **The verdict** names the state, the `holder`, `accepting`, `terminal`, `may_send`,
-  `remaining`, `effects`, `order`, `concurrent_with`, every guard reading, every world read,
-  the outbound clock, every refusal, and whether the fold was `truncated`.
+  `remaining`, `effects` (with its `transport_effects` and `agent_effects` split), `order`,
+  `concurrent_with`, every guard reading, every world read, the outbound clock, every
+  refusal, and whether the fold was `truncated`.
 - **`legal` answers two questions.** From `verdict()` it means *this trace is a legal run*,
   and it is false when the fold refused any message; `reason` names the first refusal. It
   is also false when the trace already exceeded a declared cap (a negative `headroom`); the
@@ -42,22 +50,31 @@ trace, outbound)` answers *may this outbound message be sent now?* Neither perfo
   state's offers, not a permission.
 - **The clock** orders messages and detects duplicates, per sender. Four order values:
   `ok`, `duplicate`, `out-of-order`, `concurrent`; the `order` field only ever holds `ok`
-  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a clock that does not
-  rise is refused. Across senders an equal or lower clock is reported as `concurrent` and
-  **neither message is refused**. The gate stamps the outbound clock and discards any
-  clock the caller supplied.
+  or `concurrent`, and the other two appear as a refusal's `reason`. Within one sender a
+  clock that does not rise is refused. Once a message has been accepted, a clock above the
+  highest seen plus one is refused as `out-of-order` too, with the gap named in the detail.
+  Across senders an equal or lower clock is reported as `concurrent` and **neither message
+  is refused**. The gate stamps the outbound clock and discards any clock the caller
+  supplied. `SCHEMA.md` has the rule in full.
 - **The cap is per role; the clock is per sender.** `remaining` is `None` exactly when the
   declaration has no `cap`. Otherwise `spent` and `headroom` map every declared role. Under
   `per: channel` the headroom is the same shared number for every role, so it must never be
   summed.
 - **The gate** refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
   `terminal state`, `ambiguous`, and the truncation refusal.
-- **`effects` is one unclassified tuple.** The spec promises a `transport` / `agent` split;
-  what classifies a verb is the transport declaration, which is a later cycle, so the split
-  waits.
-- **The fold has an engine-side limit** (10,000 messages, refused ones included). It is a
-  defence against a runaway trace, not a bound on a protocol, and nothing in a declaration
-  sets it. A fold that reaches it is `truncated` and the verdict is not legal.
+- **`effects` is every effect, in one tuple; `transport_effects` and `agent_effects` split
+  it.** Pass `transport=` to `verdict()` or `gate()` and each effect lands in the list for
+  the performer its verb declares, in declared order (the two lists partition `effects`);
+  without a transport both are empty, and an effect naming a verb the transport does not
+  declare raises `ValueError`. The engine still performs neither list and imports neither
+  `machines.transport` nor `machines.runner`. `effects` is empty when no transition has
+  fired and on every refusal from `gate()`; and `order` and `concurrent_with` describe the
+  last fired transition, not the last message (from `gate()` they are always `ok` and
+  empty).
+- **The fold has an engine-side limit** (by default 10,000 messages, refused ones included;
+  a caller can pass another `limit`). It is a defence against a runaway trace, not a bound
+  on a protocol, and nothing in a declaration sets it. A fold that reaches it is `truncated`
+  and the verdict is not legal.
 
 `SCHEMA.md`'s "What the engine does with a declaration" carries the arithmetic and the
 refusal reasons in full.
@@ -79,7 +96,8 @@ only in `SCHEMA.md`, which has it in full.
 4. **Whether a guard will fire.** `may_send` names a guarded offer without evaluating it, as
    no message exists yet. The checker cannot tell you a guard never fires either.
 5. **Whether the transport told the truth.** A hostile transport can misreport which messages
-   exist, and leaving messages out changes the state and can let a role past its cap. Given
+   exist: it can leave one out, or add one nobody sent. Leaving messages out changes the
+   state and can let a role past its cap. Given
    the trace it was handed, the engine cannot be made to accept a transition the declaration
    lacks, exceed its cap or report an undefined state; every guarantee is about the trace, not
    the conversation.
@@ -97,9 +115,10 @@ only in `SCHEMA.md`, which has it in full.
 ## The declaration
 
 A machine is a single ` ```machine ` fenced YAML block inside a bundle's `SKILL.md` — twelve
-fields: `machine`, `publisher`, `version`, `prefix`, `roles`, `kinds`, `fields`, `registers`,
-`cap`, `initial`, `states`, `transitions`. All of them are required except `publisher`,
-`cap`, `fields`, and `registers`. Each role binds to `repository` or `session`, nothing else. Any other top-level field is rejected by name, not silently ignored.
+fields: `machine`, `publisher`, `version`, `prefix`, `roles`, `kinds`, `fields`,
+`registers`, `cap`, `initial`, `states`, `transitions`. All of them are required except
+`publisher`, `cap`, `fields`, and `registers`. Each role binds to `repository` or `session`,
+nothing else. Any other top-level field is rejected by name, not silently ignored.
 `SCHEMA.md` documents every field and why it exists, including the two hazards worth
 knowing before you write a declaration by hand.
 
@@ -123,10 +142,49 @@ the prefix to letters, digits, spaces, `:` and `-`. `SCHEMA.md` carries the whol
 (`on: yes` is exactly the kind of word this catches) — this parser narrows that resolution to
 `true`/`false` only, so a state or role named `no` stays the string you wrote.
 
+## The transport declaration
+
+`machines.transport.parse_transport` and `load_transport` read a `transport/transport.yaml`,
+the closed-language list of verbs an installed transport can perform. It is parsed, not run:
+nothing in it is executed. `machines-check --transport` checks a machine's effects against
+it (see "The checker"). `SCHEMA.md`'s
+"The transport declaration" has the rules.
+
+## The runner
+
+`machines.runner` is the only code in this framework that executes a publisher's file. The
+engine never calls a verb, and `engine.py`, `fold.py` and `envelope.py` do not import it.
+
+`call(transport, verb, channel, args)` performs one verb. It spawns
+`transport/bin/transport <verb>` with no shell, writes `{"channel": ..., "args": ...}` on
+stdin, and returns the result envelope exactly: `{"ok": true, "result": ...}` or
+`{"ok": false, "error": "..."}`. Before it spawns anything, it refuses (`ValueError`) an
+undeclared verb, a verb with `performer: agent`, a `channel` that is not a string, and
+arguments that do not match the declaration by name, number and type. A transport that
+cannot run raises `TransportCannotRun`: a missing or non-executable entry point, a non-zero exit (stdout is then
+discarded), or stdout that is not exactly one of the two envelopes. Two bounds apply to every
+call, `CALL_TIMEOUT_SECONDS` (120) and `MAX_OUTPUT_BYTES` (8 MiB). Hitting either one kills
+the entry point's whole process group and returns `ok: false` naming the bound. The group
+is also killed before anything else escapes `call`, a `KeyboardInterrupt` included. The
+measurements behind both bounds are beside the constants in `runner.py`.
+
+`read_channel(transport, machine, channel)` calls `channel.list` and returns the answer as a
+`Trace`, through the same `parse_trace` a recorded trace goes through. A message body is
+therefore refused by name. An `ok: false` answer raises `ChannelReadFailed`. It is never read
+as an empty channel.
+
 ## The checker
 
-`bin/machines-check <path>...` — each path is a declaration file directly, or a directory
-to search for a `SKILL.md`. It parses every machine it finds, checks each one for
+`bin/machines-check [--transport <path>] <path>...` — each path is a declaration file
+directly, or a directory to search for a `SKILL.md`. `--transport <path>` (or
+`--transport=<path>`) takes a `transport.yaml` or a directory holding one; with it, every
+machine's effects are checked against the verbs that transport declares, and each distinct
+world-touching verb a machine names is printed once as `<machine>@<version>: effect <verb>
+touches <touches> (performer <performer>)` (a disclosure, never a problem, never an exit
+code). **Without it the effect vocabulary is not checked, and the output says so:**
+`Effect vocabulary not checked: no --transport given`, on the line after `Examined N
+machines`. A `--transport` that cannot be read exits 2; one that does not parse exits 1 with
+the error, prefixed with the path. It parses every machine it finds, checks each one for
 well-formedness, and checks every pair of distinctly-named machines for a prefix collision
 — two protocols that could both claim the same message.
 
@@ -173,6 +231,7 @@ it was wrong — see `SCHEMA.md`'s "Accepting is not terminal".
 ```
 plugins/machines/bin/machines-check plugins/machines/tests/fixtures/valid-session-relay.md
 Examined 1 machine
+Effect vocabulary not checked: no --transport given
 ```
 
 **Three exit codes, not two:**
@@ -180,8 +239,8 @@ Examined 1 machine
 | Exit | Means |
 |---|---|
 | `0` | Every machine examined is well-formed and none collide |
-| `1` | The tool ran and found a problem — a bad declaration, or a collision |
-| `2` | The tool could not run at all — no paths given, a path that doesn't exist, PyYAML missing, or a broken interpreter |
+| `1` | The tool ran and found a problem — a bad declaration, a collision, or a `--transport` that does not parse |
+| `2` | The tool could not run at all — no paths given, a path (or `--transport`) that doesn't exist, PyYAML missing, or a broken interpreter |
 
 A tool that cannot run must never exit `1`: that code reads as "I checked, and found a
 problem," and a broken install is not a finding. `bin/machines-check` checks for `python3`

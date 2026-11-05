@@ -424,17 +424,6 @@ _MAX_PREFIX_LENGTH = 400
 _MAX_CAP_SEARCH = 1_000_000
 
 
-# The verbs a machine may name, and the typed arguments each takes. Closed
-# on purpose: opening the vocabulary needs a transport declaration (cycle
-# C.1), and this table is what C.2 replaces. A structured effect is not
-# evidence the vocabulary opened.
-BUILTIN_VERBS = {
-    "label.add": {"name": "string"},
-    "label.remove": {"name": "string"},
-    "escalate": {},
-}
-
-
 # One test per word in ARG_TYPES, keyed by that word. Exact types, so the
 # order of ARG_TYPES does not matter: `isinstance(True, int)` is True, and
 # `type(True) is int` is not.
@@ -445,7 +434,7 @@ _ARG_TYPE_TESTS = {
 }
 
 
-def _arg_type(value):
+def arg_type(value):
     """The ARG_TYPES word `value` is, or its Python type name if none.
 
     Reads ARG_TYPES, not a list of its own: a word added there with no
@@ -457,14 +446,24 @@ def _arg_type(value):
     return type(value).__name__
 
 
-def _effect_problems(effect):
-    """Every problem with one effect, each as its own string."""
+def _effect_problems(effect, verbs):
+    """Every problem with one effect, each as its own string.
+
+    `verbs` is a dict verb-name -> Verb (a Transport's `.verbs`), read duck
+    typed (`.args`, a dict of argument name -> ARG_TYPES word), or None.
+    With None only the object's own shape is checked: the vocabulary is the
+    transport's, and without one there is nothing to check a verb against
+    (spec 13.1). The caller says so; this does not.
+    """
     if not isinstance(effect, Effect):
         return ["effect %r is not an Effect" % (effect,)]
-    declared = BUILTIN_VERBS.get(effect.verb)
-    if declared is None:
-        return ["effect verb %r is not in the vocabulary (%s)"
-                % (effect.verb, ", ".join(sorted(BUILTIN_VERBS)))]
+    if verbs is None:
+        return []
+    verb = verbs.get(effect.verb)
+    if verb is None:
+        return ["effect verb %r is not in the transport's vocabulary (%s)"
+                % (effect.verb, ", ".join(sorted(verbs)))]
+    declared = verb.args
     problems = []
     for name in sorted(effect.args):
         if name not in declared:
@@ -475,7 +474,7 @@ def _effect_problems(effect):
             problems.append("effect %r is missing the argument %r"
                             % (effect.verb, name))
             continue
-        arrived = _arg_type(effect.args[name])
+        arrived = arg_type(effect.args[name])
         if arrived != declared[name]:
             problems.append(
                 "effect %r argument %r is declared %s, but %r (%s) arrived"
@@ -583,12 +582,18 @@ def prefix_problem(prefix):
     return None
 
 
-def check_machine(m):
+def check_machine(m, verbs=None):
     """Check a machine for well-formedness.
 
     Returns a list of human-readable problems. An empty list means the
     machine is well-formed. This returns problems rather than raising,
     because a publisher wants every problem at once, not the first one.
+
+    `verbs` is a dict verb-name -> Verb (a `Transport`'s `.verbs`), or
+    None. **With None, effect-vocabulary validation does not run** -- a
+    machine whose effects name verbs nobody declared passes -- and every
+    other check does. The caller must say so (spec 13.1): `machines-check`
+    prints a line. There is no built-in vocabulary to fall back on.
 
     **This no longer checks that the machine terminates, and that is
     deliberate.** An earlier version required `cap`, required at least one
@@ -634,7 +639,7 @@ def check_machine(m):
 
     for t in m.transitions:
         for effect in t.effects:
-            problems.extend(_effect_problems(effect))
+            problems.extend(_effect_problems(effect, verbs))
 
     terminals = set(n for n, s in m.states.items() if s.terminal)
     accepting = set(n for n, s in m.states.items() if s.accepting)

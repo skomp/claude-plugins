@@ -10,6 +10,14 @@ The ordering that matters most: a guard reads its register as of BEFORE the
 arriving message is folded into it (SCHEMA.md, the `guard` bullet). Fold
 first and `ballot gt highest_promised` becomes `5 > 5`, the `le` branch
 fires, and the paxos machine never leaves `idle` -- silently, nothing raises.
+
+Where things live. `wrong_type`, `read_guard` and `candidates` are the shared
+guard evaluation: the inbound path (`fold`, here) and the outbound path
+(`engine.gate`) both call them, so a message is judged the same way whichever
+direction it travels, and a third caller must call these rather than
+re-implement any of them. The outbound clock is computed once, at the end of
+`fold`, and travels in `Fold.outbound_clock`; `engine.py` reads it and never
+recomputes it.
 """
 
 from machines.machine import OP_ATOMS
@@ -49,16 +57,6 @@ MAX_FOLD_STEPS = 10000
 
 _PYTHON_TYPE = {"int": int, "bool": bool}
 
-# SPEC section 6's four order values, exactly, as one vocabulary. Where each
-# one actually appears: "ok" and "concurrent" are the only values a `Step`
-# (and so `Verdict.order`) ever holds, because a refused message makes no
-# Step. "duplicate" and "out-of-order" appear only as a `Refusal.reason`. A
-# clock above max(seen) + 1 is reported as "out-of-order" with the gap named
-# in the refusal's detail: the author kept four values rather than add a
-# fifth. No production code reads this tuple; it documents the vocabulary.
-ORDERS = ("ok", "duplicate", "out-of-order", "concurrent")
-
-
 class WorldReadRecord(object):
     def __init__(self, index, verb, result):
         self.index = index
@@ -67,10 +65,12 @@ class WorldReadRecord(object):
 
 
 class GuardReading(object):
-    """One guard, as evaluated. `atom` is "LT", "EQ" or "GT", or None when the
-    field was absent from the message (or the guard could not be evaluated, in
-    which case `note` says why). Both compared values are kept: a guard that
-    fired must be as readable afterwards as an effect that fired."""
+    """One guard, as evaluated. `atom` is "LT", "EQ" or "GT", or None. None
+    means one of two things, and only `note` tells them apart: the field was
+    absent from the message (`note` is None; absence is never an error) or the
+    guard could not be evaluated (`note` says why). Both compared values are
+    kept: a guard that fired must be as readable afterwards as an effect that
+    fired."""
 
     def __init__(self, index, transition_id, field, op, register,
                  field_value, register_value, atom, fired, note=None):
@@ -87,6 +87,13 @@ class GuardReading(object):
 
 
 class Step(object):
+    """One accepted message. `order` is one of SPEC section 6's four values,
+    but only "ok" and "concurrent" ever appear here: a refused message makes
+    no Step. "duplicate" and "out-of-order" appear only as a `Refusal.reason`,
+    and a clock above max(seen) + 1 is reported as "out-of-order" with the gap
+    named in the refusal's detail: the author kept four values rather than
+    add a fifth."""
+
     def __init__(self, index, transition, frm, to, order, concurrent_with=()):
         self.index = index
         # The other senders whose accepted high-water clock is >= this
@@ -132,15 +139,11 @@ def _atom(a, b):
     return "LT" if a < b else ("EQ" if a == b else "GT")
 
 
-# `wrong_type`, `read_guard` and `candidates` are the shared guard
-# evaluation. The inbound path (`fold`, here) and the outbound path
-# (`engine.gate`) both call them, so a message is judged the same way
-# whichever direction it travels; a third caller must call these rather than
-# re-implement any of them.
-
 def wrong_type(m, fields):
     """The first declared field carried with the wrong Python type, or None.
-    `bool` is an `int` in Python, so it is refused against `int` explicitly:
+    Every declared field is checked, not only the ones a guard or a register
+    reads; a field the machine does not declare is skipped here. `bool` is an
+    `int` in Python, so it is refused against `int` explicitly:
     `True < 5` succeeds and would be a silent wrong comparison."""
     for name in sorted(fields):
         declared = m.fields.get(name)
@@ -153,6 +156,9 @@ def wrong_type(m, fields):
         elif want is int:
             ok = isinstance(value, int) and not isinstance(value, bool)
         else:
+            # Only reached by a declared type outside `FIELD_TYPES`, which
+            # `parse` refuses; a hand-built `Machine` can still carry one. No
+            # value can match a type nobody defined.
             ok = False
         if not ok:
             return "field %r is declared %s but carries %r (%s)" % (
@@ -164,15 +170,13 @@ def read_guard(index, t, msg, registers):
     g = t.guard
     tid = transition_id(t)
     value = msg.fields.get(g.field)
-    if g.register in registers:
-        current = registers[g.register]
-    else:
-        current = None
+    declared = g.register in registers
+    current = registers.get(g.register)
     if g.op not in OP_ATOMS:
         return GuardReading(index, tid, g.field, g.op, g.register, value,
                             current, None, False,
                             "operator %r is not in the vocabulary" % (g.op,))
-    if g.register not in registers:
+    if not declared:
         return GuardReading(index, tid, g.field, g.op, g.register, value,
                             None, None, False,
                             "register %r is not declared" % (g.register,))
@@ -306,8 +310,13 @@ def fold(m, trace, limit=MAX_FOLD_STEPS):
                     registers[name] = max(registers[name], value)
                 elif r.fold == "last":
                     registers[name] = value
-        if t.signal and t.by in spent:
+        if t.signal:
+            # `t.by == msg.by`, which was checked against `m.roles` above, and
+            # `spent` holds every declared role: the key always exists.
             spent[t.by] += 1
+        # Defence in depth: an accepted clock is always above the sender's
+        # mark (the per-sender rule above refuses the rest), so `max` and
+        # plain assignment cannot differ today. No trace can pin the `max`.
         clocks[sender] = max(clocks.get(sender, 0), clock)
         fired.append(Step(index, t, state, t.to, order, concurrent_with))
         state = t.to

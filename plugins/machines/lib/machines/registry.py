@@ -50,8 +50,12 @@ the entry is about:
 
 import itertools
 
-from .machine import check_machine, prefix_problem
+from .machine import Effect, check_machine, prefix_problem
 from .product import patterns_collide
+
+# The touches that reach outside the channel (spec 7.4). Named here, and
+# not read off the transport module, so that registry does not import it.
+WORLD_TOUCHES = ("world-read", "world-write")
 
 
 def label(m):
@@ -93,19 +97,35 @@ class Report(object):
       the same message, each pair as a sorted 2-tuple, each pair listed
       once however many versions of either protocol were examined, the
       whole list sorted -- so the output is stable across runs.
+    - `vocabulary_checked`: True iff a transport was supplied, so effects
+      were validated against its verbs. False means they were not, and a
+      reader must not take an empty `problems` as covering them.
+    - `world_effects`: `versioned_label` -> sorted list of `(verb,
+      touches)`, one per distinct pair among the effects whose verb touches `world-read` or
+      `world-write` (spec 7.4), so an installer can show them. A
+      disclosure, not a problem. `{}` when `vocabulary_checked` is False:
+      without a transport there is no `touches` to read.
     """
 
-    def __init__(self, examined, problems, collisions):
+    def __init__(self, examined, problems, collisions,
+                 vocabulary_checked=False, world_effects=None):
         self.examined = examined
         self.problems = problems
         self.collisions = collisions
+        self.vocabulary_checked = vocabulary_checked
+        self.world_effects = {} if world_effects is None else world_effects
 
 
-def check_all(machines):
+def check_all(machines, transport=None):
     """Check every machine in `machines` for its own well-formedness, then
     check every pair of machines that are not one protocol -- not the same
     `name` *and* `publisher` -- against each other for a collision.
     Returns a `Report`.
+
+    `transport` is a `transport.Transport` or None. With one, every
+    machine's effects are validated against `transport.verbs` and the
+    world-touching ones are listed in `world_effects`. Without one the
+    vocabulary is not checked and `Report.vocabulary_checked` says so.
 
     A machine's own problems -- including a prefix pattern that will not
     compile -- come straight from `check_machine`; nothing here re-derives
@@ -131,13 +151,15 @@ def check_all(machines):
     -- swallowing arbitrary exceptions would turn a bug in this library
     into a finding about the publisher's machine.
     """
+    verbs = None if transport is None else transport.verbs
     problems = {}
+    world_effects = {}
     collidable = []  # machines fit to compare (prefix compiles); the compiled
                      # pattern is not kept here -- patterns_collide recompiles
                      # both prefixes itself on every call
 
     for m in machines:
-        own_problems = list(check_machine(m))
+        own_problems = list(check_machine(m, verbs))
         if prefix_problem(m.prefix) is None:
             collidable.append(m)
         if own_problems:
@@ -145,6 +167,14 @@ def check_all(machines):
             # normal thing to be handed, and each one's problems are its
             # own. On a label alone the second one overwrote the first.
             problems[versioned_label(m)] = own_problems
+        if verbs is not None:
+            touched = sorted(set(
+                (e.verb, verbs[e.verb].touches)
+                for t in m.transitions for e in t.effects
+                if isinstance(e, Effect) and e.verb in verbs
+                and verbs[e.verb].touches in WORLD_TOUCHES))
+            if touched:
+                world_effects[versioned_label(m)] = touched
 
     collisions = []
     for a, b in itertools.combinations(collidable, 2):
@@ -163,4 +193,6 @@ def check_all(machines):
     # and the loop above produced it once per version.
     collisions = sorted(set(collisions))
 
-    return Report(len(machines), problems, collisions)
+    return Report(len(machines), problems, collisions,
+                  vocabulary_checked=transport is not None,
+                  world_effects=world_effects)

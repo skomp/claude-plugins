@@ -711,11 +711,13 @@ Each entry is a transition, with these fields:
   Agreeing on `to` is no way out. Two transitions sharing `from`, `on`, `by` **and** `to`
   are held to the same rule. More than one can fire on one trigger and nothing declared
   says which, whether or not `effects` are involved (each may, for example, require its own
-  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A transition that repeats an earlier one word for word — the same
-  value in every field, including its guard and its effects — is reported too, as declared twice. The test is derived from
-  the fields a transition, a guard and an effect actually carry, not from a hand-written list
-  of them, so a field added later is part of it without anyone remembering to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses a
-  message that matches both as `ambiguous`, so a machine that passed with a repeat would have
+  `effects` or `signal`), so they are reported unless their guards prove them disjoint. A
+  transition that repeats an earlier one word for word — the same value in every field,
+  including its guard and its effects — is reported too, as declared twice. The test is
+  derived from the fields a transition, a guard and an effect actually carry, not from a
+  hand-written list of them, so a field added later is part of it without anyone remembering
+  to add it. It adds no choice, and the engine cannot tell a repeat from a rival: it refuses
+  a message that matches both as `ambiguous`, so a machine that passed with a repeat would have
   a step it can never take. Delete the repeat.
 - **`signal`** (boolean, optional, default: `false`) — whether firing this transition emits a
   signal to a peer, as opposed to a purely local move. If present, must be an actual boolean;
@@ -749,30 +751,36 @@ Each entry is a transition, with these fields:
   effect, and a label name is a string, so here a string is required and a header field may
   not be one.
 
-  `check_machine` validates every effect against a built-in table of verbs:
+  `check_machine(m, verbs)` validates every effect against the verbs a transport declares
+  (`verbs` is a transport's `verbs` table; see "The transport declaration"). It reports a verb
+  the transport does not declare, an argument the verb does not declare, a declared argument
+  that is missing, and an argument of the wrong type. A `bool` where an `int` is declared is a
+  wrong type, even though Python considers `True` an `int`. An empty string where a string is
+  declared is reported as its own problem, not as a wrong type: it is the right type and still
+  not a usable name. A string of only whitespace is accepted.
 
-  | Verb | Arguments |
-  |---|---|
-  | `label.add` | `name`: string |
-  | `label.remove` | `name`: string |
-  | `escalate` | none |
+  **Without a transport, effects are not validated.** `check_machine(m)` with no `verbs`
+  skips this check and runs every other one: no vocabulary is built in, so there is nothing to
+  validate a verb against, and a machine naming a verb nobody declared passes. `machines-check`
+  says so on every run that has no `--transport`: `Effect vocabulary not checked: no
+  --transport given`. A clean report without that line means the effects were checked; with it,
+  they were not. With `--transport`, every distinct world-touching verb a machine names (a
+  verb that touches `world-read` or `world-write`) is also printed once, as
+  `<machine>@<version>: effect <verb> touches <touches> (performer <performer>)`, so an
+  installer can show what the machine can do to the world and who performs it. These lines
+  are disclosures, not problems, and never change the exit code.
 
-  It reports a verb not in the table, an argument the verb does not declare, a declared
-  argument that is missing, and an argument of the wrong type. A `bool` where an `int` is
-  declared is a wrong type, even though Python considers `True` an `int`. An empty string
-  where a string is declared is reported as its own problem, not as a wrong type: it is the
-  right type and still not a usable name. A string of only whitespace is accepted.
+  **This removed something.** Until cycle C the checker accepted exactly `label.add`,
+  `label.remove` and `escalate`, and rejected every other verb. Now a verb is accepted if the
+  transport declares it, and with no transport nothing is rejected on its verb. A machine that
+  relied on the old three needs a transport that declares them with the same arguments:
+  `name: string` for the two label verbs, and `escalate` with `args: {}`.
 
-  **The vocabulary is still the framework's three verbs.** This shape changed what an effect
-  looks like, not which effects exist. A structured effect is not evidence that the
-  vocabulary opened. Opening it needs a transport declaration (cycle C.1), and the built-in
-  table above is what cycle C.2 replaces with the verbs a transport declares.
-
-  The shape is closed so that the declaration stays inert data rather than a program: an
-  unvalidated effect such as `run:curl ...` would be an instruction, and an engine that later
-  grew to honour it would be executing a stranger's command. A verb and typed arguments the
-  checker has validated against a fixed table can name only something the framework already
-  offers.
+  The shape stays closed so that the declaration is inert data rather than a program: an effect
+  is a verb name and typed arguments, never a command string such as `run:curl ...`, and the
+  engine performs nothing. What a verb *means* is the transport's, and the transport is
+  checked separately; this checker validates only that the machine's effects fit what the
+  transport declared.
 - **`guard`** (mapping, optional) — a restriction on whether this transition fires: one
   declared header field, compared to one declared register's remembered value, by one
   operator. Exactly three keys, all required, no others tolerated:
@@ -847,6 +855,72 @@ Each entry is a transition, with these fields:
 Any field on a transition entry other than `from`, `on`, `by`, `to`, `signal`, `effects` and
 `guard` is rejected by name.
 
+## The transport declaration
+
+A machine says what it needs done (`effects`) and the transport says what can be done. The
+transport declaration is `transport/transport.yaml`, beside the publisher's code. It is YAML
+loaded with the same `MachineSafeLoader` as a machine (so `total_order: yes` is the string
+`"yes"`, not `true`), and parsed in the same closed-language way: every key is known, an
+unknown key is refused by name, and nothing in it is an expression. It is data so that an
+installer can show a user what a transport claims to do without importing the transport's code
+first. `machines.transport.parse_transport(text)` and `load_transport(path)` read it and raise
+`TransportError` (a `DeclarationError`, with `.field` naming the key) for anything refused.
+
+```yaml
+transport: github-issues     # NAME-shaped
+version: v1                  # string
+channel:
+  total_order: true          # required, a real bool, no default
+  id: "a GitHub issue URL"   # optional prose for the consent screen; never interpreted
+verbs:
+  channel.list:
+    touches: channel-read
+    performer: transport
+    args: {}                 # required, may be empty
+    returns: messages
+  channel.append:
+    touches: channel-write
+    performer: transport
+    args: { body: string }
+  escalate:
+    touches: world-write
+    performer: agent
+    args: {}
+```
+
+- **Top level:** exactly `transport`, `version`, `channel`, `verbs`, all required. `run`, `cmd`
+  and `shell` are not special: the entry point is fixed, so the declaration has nowhere to put a
+  command, and they are unknown keys like any other.
+- **`channel`:** exactly `total_order` and `id`. `total_order` is required, has no default (the
+  engine behaves differently for each value, and guessing would pick one silently), and must be
+  a real `true` or `false`: `yes` and the quoted string `"true"` are refused. `id` is optional.
+- **`verbs`:** a non-empty mapping. Each verb name matches the same pattern as an effect's verb.
+  Each entry has exactly `touches` (one of `channel-read`, `channel-write`, `world-read`,
+  `world-write`), `performer` (`transport` or `agent`), `args` and `returns`.
+- **`args`:** a mapping of argument name to one of `string`, `int`, `bool`. Required; `{}` is
+  how a verb says it takes none. A type word outside those three is refused, naming the word
+  and the verb.
+- **`returns`:** required on a `channel-read` verb and refused on any other. Its one value is
+  `messages`.
+- **Required verbs:** exactly one `channel-read` verb, named `channel.list`, with
+  `returns: messages`, `performer: transport` and `args: {}`; and a `channel.append` with
+  `touches: channel-write` and `performer: transport`. A transport with no way to read its
+  channel is not a transport, and the runner needs one name to call. `channel.list` takes no
+  arguments because `read_channel` calls it with none; any other `args` is refused, with the
+  error field `args`.
+- **`version`:** a non-empty string.
+- **An `agent` verb may not touch the channel.** `performer: agent` with `channel-read` or
+  `channel-write` is refused: the channel is the transport's to read and write. This rule is
+  not in the design spec; it is the maintainers' call.
+
+`machines-check --transport` checks a machine's effects against a transport's verbs (see
+`effects`, above). `machines.runner` runs a transport; README, "The runner", has its rules.
+
+The entry point is `transport/bin/transport <verb>`. The call is `{"channel": ..., "args":
+...}` as JSON on stdin. The answer is `{"ok": true, "result": ...}` or `{"ok": false,
+"error": "..."}` as JSON on stdout. A non-zero exit means the transport could not run, and
+stdout is then not read as an answer.
+
 ## What the engine does with a declaration
 
 Everything above says what a declaration *is*. This section says what the engine, cycle B,
@@ -872,7 +946,10 @@ declared register, what each role has spent against the cap, and every guard rea
   fold carries on. The reasons are `undeclared kind`, `undeclared role`, `field type` (a
   field carried with the wrong Python type), `duplicate`, `out-of-order`, `no transition` and
   `ambiguous` (more than one transition fires; none is picked). A world read carried by a
-  refused message is still reported.
+  refused message is still reported. So are the guard readings of a refused message, when it
+  got as far as the transition lookup: an `ambiguous` or `no transition` refusal has read
+  its guards, and every refusal before that point (the kind, the role, the field type, the
+  clock) has read none.
 
 ### The verdict
 
@@ -885,17 +962,30 @@ world read; the outbound clock; every refusal; and whether the fold was truncate
   names the first refusal. It is also false when the trace already spent more than a
   declared cap (a negative `headroom`), and `reason` then names the role and the overspend.
   The engine does not attribute the overspend to a particular message: which message busted
-  a cap counted per role and per channel is left to a later cycle. From `gate()` it means *may this outbound message be sent now*: a
-  refusal in the history does not by itself refuse an outbound message, though the history is
-  still reported in `refusals`.
+  a cap counted per role and per channel is left to a later cycle. From `gate()` it means
+  *may this outbound message be sent now*: a refusal in the history does not by itself
+  refuse an outbound message, though the history is still reported in `refusals`.
 - **`may_send` still lists the folded state's offers when `legal` is false.** They are what
   the state offers, not a permission; read `legal` first. Each offer names a guard without
   evaluating it, because no message exists yet.
-- **`effects` is one unclassified tuple of `Effect` values**, each a verb and its typed
-  arguments, not a rendered string. It carries the effects of the transition the gate
-  would fire, or of the last transition the fold fired. The framework's design promises a
-  `transport` / `agent` split. What classifies a verb is the transport declaration, which is
-  cycle C, so the split waits and `effects` stays one tuple until it exists.
+- **`effects` is one tuple of `Effect` values**, each a verb and its typed arguments, not a
+  rendered string, every effect in declared order. It carries the effects of the transition
+  the gate would fire, or of the last transition the fold fired. It is empty when no
+  transition has fired yet (`verdict()`) and on every refusal from `gate()`.
+- **`transport_effects` and `agent_effects` split `effects` by performer.** `verdict(m, trace,
+  transport=t)` and `gate(m, trace, outbound, transport=t)` read `t.verbs[verb].performer`
+  for each effect: `transport` goes to `transport_effects`, `agent` to `agent_effects`. The
+  two partition `effects` and each keeps its order, so a transition whose effects interleave
+  the performers yields two interleaved-then-separated tuples. With no `transport` both are
+  `()`. An effect whose verb the transport does not declare raises `ValueError` naming the
+  verb: `check_machine(m, verbs=t.verbs)` would have refused that machine, so it is a caller's
+  error, and no partial split is returned. The engine still performs neither list, and
+  imports neither `machines.transport` nor `machines.runner`; it reads attributes of the
+  object it is handed.
+- **`order` and `concurrent_with` describe the last fired transition, not the last message.**
+  A refused message leaves them alone, and with no transition fired they are `ok` and
+  empty. From `gate()` they are always `ok` and empty: an outbound clock is stamped above
+  every clock seen, so the message has no peers.
 
 ### `remaining`
 
@@ -946,19 +1036,23 @@ failure made silent.
 ### The outbound gate
 
 `gate()` refuses for exactly five reasons: `not permitted here`, `cap exhausted`,
-`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An outbound field of the wrong Python type is refused as
-`not permitted here`. The gate **stamps the outbound clock and discards any clock the caller
-supplied**: a sender cannot choose it. A truncated fold is never legal, and the reason names
+`terminal state`, `ambiguous` and the truncation refusal (the fold hit its limit, below). An
+outbound field of the wrong Python type is refused as `not permitted here`; so is a field
+of the wrong type that no guard reads, because the type check covers every declared
+field. The gate **stamps the outbound clock and discards any clock the caller supplied**: a
+sender cannot choose it. A truncated fold is never legal, and the reason names
 the truncation.
 
 ### The fold limit
 
-The engine stops a single fold at 10,000 messages. It is an engine-side defence against a
-trace somebody hands it, **not a bound on a protocol**: there is no schema field for it,
-nothing a publisher fills in, and a protocol is still not required to terminate. A truncated
+By default the engine stops a single fold at 10,000 messages. It is an engine-side defence
+against a trace somebody hands it, **not a bound on a protocol**: there is no schema field
+for it, nothing a publisher fills in, and a protocol is still not required to terminate. A truncated
 fold makes the verdict **illegal**, because a verdict computed from a fold that did not
-finish is not a verdict about the channel. `steps` counts refused messages too, because a
-refused message still cost a fold step.
+finish is not a verdict about the channel. `steps` is an attribute of the `Fold`, not a
+field of the verdict, and it counts refused messages too, because a refused message still
+cost a fold step. The limit is the default of the `limit` parameter of `fold`, `verdict` and
+`gate`, so a caller can pass another; nothing a publisher writes can.
 
 ### What the engine does not check
 
@@ -993,7 +1087,8 @@ something that verifies what a conversation means. It does not.
    guarantee here ends at that trace. A trace is only as honest as whoever produced it.
 6. **Anything outside the channel.** The engine carries a world read into the verdict and
    **never branches on it**. That is pinned by a test rather than a comment: the same trace
-   with wildly different world-read payloads must give an identical verdict. A world read
+   with wildly different world-read payloads must give an identical verdict in every field
+   but `world_reads`, which carries the payloads and so differs by design. A world read
    reaches a conversation only as a message somebody wrote into the channel.
 7. **The clock is not `seq`, and `remaining` is not an ordinal.** See "The clock and the four
    order values", above.
