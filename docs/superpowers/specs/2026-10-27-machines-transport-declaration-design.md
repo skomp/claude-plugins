@@ -206,8 +206,10 @@ verbs:
   escalate:
     touches: world-write
     performer: agent
-    args: { reason: string }
+    args: {}
 ```
+
+*The example was corrected on 2026-11-05 to agree with §13.5 and with the shipped fixtures.*
 
 - **`args`** is a name-to-type mapping, and the types are the declaration language's own:
   `string`, `int`, `bool`. **Not a nested schema.** §7 asks for *"a typed argument schema, not

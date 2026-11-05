@@ -7,16 +7,23 @@ and check it before you trust it.
 
 **Cycle A shipped the schema and the checker; cycle A.1 built typed fields, registers,
 guard and a scoped, strengthened cap check into that same schema and checker; cycle B
-built the engine.** There is an engine: given a machine and the recorded trace of a
-channel, it advances a state and emits a **verdict**. It still emits no message and
-performs no effect, because the verdict only names what would happen. There is no
-installer — nothing wires a declared machine into anything that dispatches real traffic.
-There is no dispatcher — nothing routes an inbound message to the machine that owns it.
+built the engine; cycle C (C.1-C.3) shipped the transport declaration, the open effect
+vocabulary, the runner and the verdict's two effect lists.** There is an engine: given a
+machine and the recorded trace of a channel, it advances a state and emits a **verdict**.
+The engine itself still emits no message and performs no effect, because the verdict only
+names what would happen. A transport declares its verbs in `transport/transport.yaml`;
+`machines-check --transport` checks a machine's effects against that open vocabulary (there
+is no longer a fixed three-verb list); `machines.runner` is the only code that executes a
+transport; and a verdict splits its effects into `transport_effects` and `agent_effects`.
+There is no installer (cycle C.4) — nothing wires a declared machine into anything that
+dispatches real traffic. There is no dispatcher — nothing routes an inbound message to the
+machine that owns it.
 What exists is a closed declaration language, a parser for it, a set of checks that a
 single machine is well-formed, a checker that runs those checks over every machine handed
-to it and reports whether any two claim the same message, and an engine that folds a trace
-into a verdict. The engine is a library (`machines.engine`); `bin/machines-check` does not
-call it. Anything that wires the engine into a transport is a later cycle.
+to it and reports whether any two claim the same message, an engine that folds a trace
+into a verdict, a transport declaration with its parser, and a runner. The engine is a
+library (`machines.engine`); `bin/machines-check` does not call it. The installer and the
+dispatcher are later work.
 
 ## The engine
 
